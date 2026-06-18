@@ -575,7 +575,8 @@ const Ciclos = {
       const _badge=document.getElementById("cicloBadge");if(_badge)_badge.textContent=CD.nome;
       // Realtime
       this._subscribe(id);
-      App.navigate(Auth.defaultPage());
+      // Force navigation to default page
+      setTimeout(()=>App.navigate(Auth.defaultPage()),100);
     }catch(e){App.toast("Erro ao carregar: "+e.message,"err");console.error(e);}finally{App._hideSpinner();}
   },
   _subscribe(cicloId){
@@ -987,26 +988,34 @@ Pages._onRoleChange=function(){
 };
 
 Pages._saveUser=function(){
-  const id=document.getElementById("usr-id").value;const user=document.getElementById("usr-user").value.trim();const senha=document.getElementById("usr-senha").value.trim();const role=document.getElementById("usr-role").value;
-  if(!user||!senha){App.toast("Preencha usuário e senha","err");return;}
-  if(senha.length<4){App.toast("Senha mínima de 4 caracteres","err");return;}
-  const urow={username:user,senha,role,ativo:true};
+  const id=document.getElementById("usr-id").value;
+  const user=document.getElementById("usr-user").value.trim();
+  const senhaField=document.getElementById("usr-senha").value.trim();
+  const role=document.getElementById("usr-role").value;
+  if(!user){App.toast("Preencha o nome de usuário","err");return;}
+  // Build update row - only include senha if it was changed
+  const urow={username:user,role,ativo:true};
+  if(senhaField&&!senhaField.startsWith("•")){
+    if(senhaField.length<4){App.toast("Senha mínima de 4 caracteres","err");return;}
+    urow.senha=senhaField;
+  }
   if(id){
+    // Editing existing user
     _sb.from("usuarios").update(urow).eq("id",id).then(({error})=>{
-      if(error){App.toast("Erro: "+error.message,"err");return;}
-      const u=META.users.find(x=>String(x.id)===String(id));
-      if(u){u.user=user;u.senha=senha;u.role=role;}
-      // Reload users from Supabase to get fresh data
+      if(error){App.toast("Erro ao salvar: "+error.message,"err");return;}
       _sb.from("usuarios").select("*").then(({data})=>{
         if(data)META.users=data.map(u=>({id:u.id,user:u.username,senha:u.senha,role:u.role,customPages:null,ativo:u.ativo}));
+        App.closeModal("modal-user");App.navigate("usuarios");App.toast("Usuário atualizado!");
       });
-      App.closeModal("modal-user");App.navigate("usuarios");App.toast("Usuário salvo!");
     });
   } else {
+    // New user - senha required
+    if(!senhaField||senhaField.length<4){App.toast("Senha mínima de 4 caracteres","err");return;}
+    urow.senha=senhaField;
     _sb.from("usuarios").insert(urow).select().single().then(({data:d,error})=>{
-      if(error){App.toast("Erro: "+error.message,"err");return;}
-      META.users.push({id:d.id,user,senha,role,customPages:null});
-      App.closeModal("modal-user");App.navigate("usuarios");App.toast("Usuário salvo!");
+      if(error){App.toast("Erro ao criar: "+error.message,"err");return;}
+      META.users.push({id:d.id,user,senha:senhaField,role,customPages:null});
+      App.closeModal("modal-user");App.navigate("usuarios");App.toast("Usuário criado!");
     });
   }
 };
