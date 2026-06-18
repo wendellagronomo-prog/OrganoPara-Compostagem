@@ -7,6 +7,7 @@
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.44.0/iconfont/tabler-icons.min.css">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
 :root{
   --verde:#2d6a4f;--verde-esc:#1b4332;--verde-clr:#d8f3dc;--verde-med:#52b788;
@@ -328,14 +329,7 @@ const META_KEY = "organopara_meta_v3";
 function defaultMeta(){
   return {
     currentUser: null,
-    users:[
-      {id:"master",user:"master",senha:"master123",role:"master"},
-      {id:"u01",user:"usuario01",senha:"user01",role:"user01"},
-      {id:"u02",user:"usuario02",senha:"user02",role:"user02"},
-      {id:"u03",user:"usuario03",senha:"user03",role:"user03"},
-      {id:"u04",user:"usuario04",senha:"user04",role:"user04"},
-      {id:"u05",user:"usuario05",senha:"user05",role:"user05"},
-    ],
+    users:[],
     cicloAtivo: null,
     filtro: {patio:PATIOS[0], leira:LEIRAS[0]},
   };
@@ -453,6 +447,30 @@ const STATE = new Proxy({},{
 });
 
 // ═══════════════════════════════════════════════════════════════
+//  SUPABASE
+// ═══════════════════════════════════════════════════════════════
+const SUPABASE_URL = "https://jawcibjykjbijzxsrikd.supabase.co";
+const SUPABASE_KEY = "sb_publishable_AgzBgWpXlHh_7ZCWHCOWnQ_ZVPjZige";
+const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+function mapUsuarioFromDB(row){
+  return{id:row.id,user:row.login,senha:row.senha,role:row.perfil,nome:row.nome,ativo:row.ativo};
+}
+
+const DB={
+  async fetchMeta(){return null;},
+  async saveMetaRemote(_meta){return false;},
+  async fetchCiclo(_id){return null;},
+  async saveCicloRemote(_ciclo){return false;},
+  async listCiclosRemote(){return[];},
+  async fetchUsuarios(){
+    const {data,error}=await supabase.from("usuarios").select("*").order("nome");
+    if(error)throw error;
+    return(data||[]).map(mapUsuarioFromDB);
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
 //  AUTH / ROLES
 // ═══════════════════════════════════════════════════════════════
 const ROLE_DEFS = {
@@ -465,12 +483,19 @@ const ROLE_DEFS = {
 };
 
 const Auth = {
-  login(){
+  async login(){
     const user=document.getElementById("loginUser").value.trim();
     const senha=document.getElementById("loginPass").value;
-    const found=META.users.find(u=>u.user===user&&u.senha===senha);
-    if(!found){document.getElementById("loginErr").textContent="Usuário ou senha incorretos.";return;}
-    META.currentUser=found;saveMeta();
+    const {data,error}=await supabase
+      .from("usuarios")
+      .select("*")
+      .eq("login",user)
+      .eq("senha",senha)
+      .eq("ativo",true)
+      .single();
+    if(error||!data){document.getElementById("loginErr").textContent="Usuário ou senha incorretos.";return;}
+    META.currentUser={id:data.id,nome:data.nome,user:data.login,role:data.perfil};
+    saveMeta();
     document.getElementById("loginErr").textContent="";
     document.getElementById("loginScreen").style.display="none";
     document.getElementById("appShell").style.display="block";
@@ -713,8 +738,9 @@ const App = {
   },
   updateSidebarUser(){
     const u=META.currentUser;if(!u)return;
-    document.getElementById("sidebarAvatar").textContent=u.user.slice(0,2).toUpperCase();
-    document.getElementById("sidebarName").textContent=u.user;
+    const display=u.nome||u.user;
+    document.getElementById("sidebarAvatar").textContent=display.slice(0,2).toUpperCase();
+    document.getElementById("sidebarName").textContent=display;
     document.getElementById("sidebarRole").textContent=(ROLE_DEFS[u.role]||{}).label||u.role;
   },
   navigate(page){
@@ -728,7 +754,8 @@ const App = {
     document.getElementById("pageSub").textContent=this._sub(page);
     this._renderFilter(page);
     const el=document.getElementById("content");el.innerHTML="";
-    if(Pages[page])Pages[page](el);else el.innerHTML=`<div class="empty"><i class="ti ti-tool"></i><div class="title">Em desenvolvimento</div></div>`;
+    if(Pages[page]){const r=Pages[page](el);if(r&&typeof r.then==="function")r.catch(e=>{console.error(e);App.toast("Erro ao carregar página","err");});}
+    else el.innerHTML=`<div class="empty"><i class="ti ti-tool"></i><div class="title">Em desenvolvimento</div></div>`;
   },
   _sub(p){const m={ciclos:"Criar, selecionar e gerenciar ciclos de produção",usuarios:"Gerenciar usuários e permissões",ficha:"Histórico completo da leira selecionada",viagens:"Registro de cada viagem de matéria-prima",levantamento:"Resumo por leira — soma automática das viagens",enriquecimento:"Quantidades calculadas por leira conforme taxas",aplinsumos:"Registro do que foi efetivamente aplicado",bioinsumos:"Dosagem e aplicação dos 4 biológicos",monitoramento:"Temperatura, pH e umidade por leira",revolvimento:"Registro de revolvimentos com data e operador",gases:"Aferição de CO₂, O₂, CH₄, H₂S e NH₃",colheita:"Registro da saída e cálculo de eficiência",taxas:"Configurar taxas de enriquecimento",relatorio:"Exportar resumo em PDF",painel:"Visão consolidada de todas as leiras"};return m[p]||"";},
   _renderFilter(page){
@@ -880,8 +907,10 @@ Pages._exportCiclo=function(id){
 
 
 /* ── USUÁRIOS ── */
-Pages.usuarios = function(el){
-  const cards=META.users.map(u=>{
+Pages.usuarios=async function(el){
+  let users=[];
+  try{users=await DB.fetchUsuarios();META.users=users;}catch(e){console.error(e);App.toast("Erro ao carregar usuários","err");}
+  const cards=users.map(u=>{
     const rd=ROLE_DEFS[u.role]||{};
     const effPages=u.customPages||(rd.pages||[]);
     const isCustom=!!u.customPages;
@@ -932,15 +961,15 @@ Pages._newUser=function(){
   Pages._onRoleChange();
   App.openModal("modal-user");
 };
-Pages._editUser=function(id){
-  const u=META.users.find(x=>x.id===id);if(!u)return;
+Pages._editUser=async function(id){
+  const {data:u,error}=await supabase.from("usuarios").select("*").eq("id",id).single();
+  if(error||!u)return;
   document.getElementById("usr-id").value=u.id;
-  document.getElementById("usr-user").value=u.user;
+  document.getElementById("usr-user").value=u.login;
   document.getElementById("usr-senha").value=u.senha;
-  document.getElementById("usr-role").value=u.role||"user01";
-  // Populate checkboxes from user's custom pages (or role default)
+  document.getElementById("usr-role").value=u.perfil||"user01";
   setTimeout(()=>{
-    const pages=u.customPages||(ROLE_DEFS[u.role]||{}).pages||[];
+    const pages=(ROLE_DEFS[u.perfil]||{}).pages||[];
     document.querySelectorAll(".usr-page-cb").forEach(cb=>{
       cb.checked=pages.includes(cb.value);
     });
@@ -955,21 +984,18 @@ Pages._onRoleChange=function(){
   });
 };
 
-Pages._saveUser=function(){
+Pages._saveUser=async function(){
   const id=document.getElementById("usr-id").value;const user=document.getElementById("usr-user").value.trim();const senha=document.getElementById("usr-senha").value.trim();const role=document.getElementById("usr-role").value;
   if(!user||!senha){App.toast("Preencha usuário e senha","err");return;}
   if(senha.length<4){App.toast("Senha mínima de 4 caracteres","err");return;}
-  // Collect selected pages
-  const customPages=Array.from(document.querySelectorAll(".usr-page-cb:checked")).map(cb=>cb.value);
-  if(id){
-    const u=META.users.find(x=>x.id===id);
-    if(u){u.user=user;u.senha=senha;u.role=role;u.customPages=customPages;}
-  } else {
-    META.users.push({id:uid(),user,senha,role,customPages});
-  }
+  const payload={login:user,senha,perfil:role,nome:user,ativo:true};
+  const {error}=id
+    ?await supabase.from("usuarios").update(payload).eq("id",id)
+    :await supabase.from("usuarios").insert(payload);
+  if(error){console.error(error);App.toast("Erro ao salvar usuário","err");return;}
   saveMeta();App.closeModal("modal-user");App.navigate("usuarios");App.toast("Usuário salvo!");
 };
-Pages._delUser=function(id){if(!confirm("Remover este usuário?"))return;META.users=META.users.filter(u=>u.id!==id);saveMeta();App.navigate("usuarios");App.toast("Removido.");};
+Pages._delUser=async function(id){if(!confirm("Remover este usuário?"))return;const {error}=await supabase.from("usuarios").delete().eq("id",id);if(error){console.error(error);App.toast("Erro ao remover usuário","err");return;}App.navigate("usuarios");App.toast("Removido.");};
 
 /* ── FICHA DA LEIRA ── */
 Pages.ficha = function(el){
