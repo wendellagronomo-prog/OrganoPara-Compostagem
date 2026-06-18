@@ -7,7 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Organo Pará">
-<link rel="manifest" href="manifest.json">
+
 <title>Organo Pará — Controle de Compostagem</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.44.0/iconfont/tabler-icons.min.css">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
@@ -325,6 +325,84 @@ const STATE = new Proxy({}, {
 // ═══════════════════════════════════════════════════════════════
 //  SUPABASE DATA LAYER
 // ═══════════════════════════════════════════════════════════════
+// Helpers
+function fmtDate(iso){if(!iso)return"—";const[y,m,d]=iso.split("-");return d&&m&&y?`${d}/${m}/${y}`:iso;}
+function addDays(iso,n){const d=new Date(iso);d.setDate(d.getDate()+n);return d.toISOString().slice(0,10);}
+function todayISO(){return new Date().toISOString().slice(0,10);}
+function fmtNum(v,dec=1){if(v===null||v===undefined||isNaN(v))return"—";return v.toLocaleString("pt-BR",{minimumFractionDigits:dec,maximumFractionDigits:dec});}
+function fmtPct(v,dec=0){if(v===null||v===undefined||isNaN(v))return"—";return(v*100).toLocaleString("pt-BR",{minimumFractionDigits:dec,maximumFractionDigits:dec})+"%";}
+function statusBadge(s){const m={"Aguardando":"bc","Em processo":"bv","Atenção":"ba","Crítico":"br","Pronto p/ colheita":"baz","Colhido":"bm"};return`<span class="badge ${m[s]||"bc"}">${s}</span>`;}
+function prazoBadge(dr){if(dr===null)return`<span class="badge bc">—</span>`;const c=dr<=5?"br":dr<=10?"ba":"bv";return`<span class="badge ${c}">${dr}d</span>`;}
+function stageBar(p,l){
+  const et=((STATE.painel[leiraKey(p,l)]||{}).etapas)||{};
+  const segs=ETAPAS.map((e,i)=>{const done=!!et[e.key];const prev=i===0||!!et[ETAPAS[i-1].key];return`<div class="stage-seg ${done?"done":prev?"active":""}" title="${e.label}"></div>`;}).join("");
+  const cnt=Calc.etapasConcluidas(p,l);
+  return`<div class="stage-track">${segs}</div><div class="stage-labels"><span>${ETAPAS[0].label}</span><span style="font-weight:700;color:var(--laranja)">${cnt.count}/6 etapas</span><span>${ETAPAS[5].label}</span></div>`;
+}
+
+
+const Calc = {
+  pesoLiqViagem(v){return(parseFloat(v.pesoBruto)||0)*(1-(parseFloat(v.umidade)||0));},
+  viagensDaLeira(p,l){return STATE.viagens.filter(v=>v.patio===p&&v.leira===l);},
+  resumoLev(p,l){
+    const vs=this.viagensDaLeira(p,l);let pb=0,pliq=0;
+    vs.forEach(v=>{pb+=parseFloat(v.pesoBruto)||0;pliq+=this.pesoLiqViagem(v);});
+    return{nViagens:vs.length,pesoBruto:pb,pesoLiquido:pliq,umidMedia:pb>0?(1-pliq/pb):0};
+  },
+  pesoBase(p,l){const mo=STATE.taxas.materiaisOrganicos.taxa||0.8;return mo?this.resumoLev(p,l).pesoLiquido/mo:0;},
+  qtdInsumo(p,l,key){
+    const base=this.pesoBase(p,l);const t=STATE.taxas[key];if(!t||!base)return 0;
+    let v=DOSE_TON.has(key)?(base/1000)*t.taxa:base*t.taxa;
+    if(COM_UMIDADE.has(key)&&t.umidade<1)v=v/(1-t.umidade);
+    return v;
+  },
+  enrCompleto(p,l){const base=this.pesoBase(p,l);const out={pesoBase:base};TAXA_ORDER.forEach(k=>{if(k!=="materiaisOrganicos")out[k]=this.qtdInsumo(p,l,k);});return out;},
+  regsMon(p,l){return STATE.monitoramento.filter(m=>m.patio===p&&m.leira===l).sort((a,b)=>(a.data||"").localeCompare(b.data||""));},
+  mediaTemp(m){const pts=[m.p1,m.p2,m.p3,m.p4].map(parseFloat).filter(v=>!isNaN(v));return pts.length?pts.reduce((a,b)=>a+b,0)/pts.length:null;},
+  alertaTemp(med){if(med===null)return null;if(med<45)return{txt:"Fria",cls:"baz"};if(med>70)return{txt:"Crítica",cls:"br"};if(med>65)return{txt:"Alta",cls:"ba"};return{txt:"Ideal",cls:"bv"};},
+  alertaPH(ph){const v=parseFloat(ph);if(isNaN(v))return null;if(v<6.5)return{txt:"Ácido",cls:"ba"};if(v>8)return{txt:"Alcalino",cls:"ba"};return{txt:"OK",cls:"bv"};},
+  alertaUmid(u){const v=parseFloat(u);if(isNaN(v))return null;if(v<0.40)return{txt:"Seca",cls:"br"};if(v>0.60)return{txt:"Úmida",cls:"ba"};return{txt:"OK",cls:"bv"};},
+  resumoMon(p,l){const rs=this.regsMon(p,l);const ts=rs.map(r=>this.mediaTemp(r)).filter(v=>v!==null);const phs=rs.map(r=>parseFloat(r.ph)).filter(v=>!isNaN(v));const us=rs.map(r=>parseFloat(r.umidade)).filter(v=>!isNaN(v));const avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;return{n:rs.length,tempMedia:avg(ts),tempMax:ts.length?Math.max(...ts):null,phMedio:avg(phs),umidMedia:avg(us),ultimaData:rs.length?rs[rs.length-1].data:null};},
+  regsGas(p,l){return STATE.gases.filter(g=>g.patio===p&&g.leira===l).sort((a,b)=>(a.data||"").localeCompare(b.data||""));},
+  mediaCO2(g){const pts=[g.co2a,g.co2b,g.co2c].map(parseFloat).filter(v=>!isNaN(v));return pts.length?pts.reduce((a,b)=>a+b,0)/pts.length:null;},
+  resumoGas(p,l){const rs=this.regsGas(p,l);const avg=arr=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:null;return{n:rs.length,co2:avg(rs.map(r=>this.mediaCO2(r)).filter(v=>v!==null)),o2:avg(rs.map(r=>parseFloat(r.o2)).filter(v=>!isNaN(v))),nh3:avg(rs.map(r=>parseFloat(r.nh3)).filter(v=>!isNaN(v)))};},
+  revsLeira(p,l){const k=leiraKey(p,l);return((STATE.revolvimento[k]||{}).entries||[]).filter(e=>e.data);},
+  diasDesdeHoje(ini){if(!ini)return null;return Math.round((new Date()-new Date(ini))/86400000);},
+  bioStatus(p,l,bioKey,ini){
+    const key=leiraKey(p,l);const rec=(STATE.bioinsumos[key]||{})[bioKey];const aplicado=rec&&rec.data;
+    const periodos={bioRaiz:[0,5],bioSolub:[10,15],bioRelease:[25,30],bioAZ:[40,45]};const[dmin,dmax]=periodos[bioKey];
+    if(aplicado)return{status:"aplicado",label:"Aplicado em "+fmtDate(rec.data)};
+    if(!ini)return{status:"aguardando",label:`Aguardar (dia ${dmin}–${dmax})`};
+    const dias=this.diasDesdeHoje(ini);
+    if(dias>=dmax)return{status:"atrasado",label:"Não aplicado!"};if(dias>=dmin)return{status:"aplicar",label:"Aplicar agora!"};
+    return{status:"aguardando",label:`Aguardar (dia ${dmin}–${dmax})`};
+  },
+  etapasConcluidas(p,l){const et=((STATE.painel[leiraKey(p,l)]||{}).etapas)||{};let n=0;ETAPAS.forEach(e=>{if(et[e.key])n++;});return{count:n,total:ETAPAS.length,pct:n/ETAPAS.length};},
+  dadosPainel(p,l){
+    const key=leiraKey(p,l);const pan=STATE.painel[key]||{};const lev=STATE.levantamento[key]||{};
+    const ini=lev.dataInicio||pan.dataInicio||null;const dias=this.diasDesdeHoje(ini);const dr=dias!==null?Math.max(0,PRAZO_DIAS-dias):null;
+    const et=this.etapasConcluidas(p,l);const enr=this.enrCompleto(p,l);const pesoE=enr.pesoBase;
+    const colh=STATE.colheita[key]||{};const pesoS=parseFloat(colh.peso);
+    // Peso estimado na saída considerando umidade residual do produto
+    const umidSaida=STATE.taxas.umidadeSaida?STATE.taxas.umidadeSaida.taxa:0.25;
+    const pesoEstimado=(pesoE&&umidSaida<1)?pesoE/(1-umidSaida):null;
+    let qkg=null,qpct=null,efic=null;
+    if(!isNaN(pesoS)&&pesoE){qkg=pesoE-pesoS;qpct=qkg/pesoE;efic=pesoS/pesoE;}
+    let status="Aguardando";
+    if(!ini)status="Aguardando";else if(!isNaN(pesoS))status="Colhido";else if(et.count===6)status="Pronto p/ colheita";else if(dr!==null&&dr<=5)status="Crítico";else if(dr!==null&&dr<=10)status="Atenção";else status="Em processo";
+    return{ini,dias,dr,et,pesoEntrada:pesoE,pesoSaida:isNaN(pesoS)?null:pesoS,pesoEstimado,umidSaida,quebraKg:qkg,quebraPct:qpct,eficiencia:efic,status,previsao:ini?addDays(ini,PRAZO_DIAS):null};
+  },
+  leirasAtivas(){const out=[];PATIOS.forEach(p=>LEIRAS.forEach(l=>{const lev=STATE.levantamento[leiraKey(p,l)];if(lev&&lev.dataInicio)out.push({patio:p,leira:l});}));return out;},
+  panoramaPatio(patio){
+    const ls=LEIRAS.filter(l=>{const lev=STATE.levantamento[leiraKey(patio,l)];return lev&&lev.dataInicio;});const total=ls.length;if(!total)return{total:0,enriq:0,bio:0,mon:0,col:0};
+    let enriq=0,bio=0,mon=0,col=0;
+    ls.forEach(l=>{const key=leiraKey(patio,l);const et=((STATE.painel[key]||{}).etapas)||{};if(et.enriquecimento)enriq++;if(et.monitoramento)mon++;const bd=STATE.bioinsumos[key]||{};if(BIOINSUMOS_DEF.every(b=>bd[b.key]&&bd[b.key].data))bio++;const colh=STATE.colheita[key]||{};if(!isNaN(parseFloat(colh.peso)))col++;});
+    return{total,enriq:enriq/total,bio:bio/total,mon:mon/total,col:col/total};
+  },
+};
+
+
+
 const DB = {
 
   /* ── CICLOS ── */
@@ -662,311 +740,6 @@ const ROLE_DEFS = {
   user04:  {label:"Usuário 04",       pages:["revolvimento"]},
   user05:  {label:"Usuário 05",       pages:["levantamento","relatorio","ficha"]},
 };
-
-const Auth = {
-  login(){
-    const user=document.getElementById("loginUser").value.trim();
-    const senha=document.getElementById("loginPass").value;
-    const found=META.users.find(u=>u.user===user&&u.senha===senha);
-    if(!found){document.getElementById("loginErr").textContent="Usuário ou senha incorretos.";return;}
-    META.currentUser=found;saveMeta();
-    document.getElementById("loginErr").textContent="";
-    document.getElementById("loginScreen").style.display="none";
-    document.getElementById("appShell").style.display="block";
-    App.init();
-  },
-  logout(){
-    META.currentUser=null;saveMeta();
-    document.getElementById("appShell").style.display="none";
-    document.getElementById("loginScreen").style.display="flex";
-    document.getElementById("loginUser").value="";
-    document.getElementById("loginPass").value="";
-  },
-  canAccess(p){const u=META.currentUser;if(!u)return false;const pages=u.customPages||(ROLE_DEFS[u.role]||{}).pages||[];return pages.includes(p);},
-  defaultPage(){const u=META.currentUser;if(!u)return"viagens";const pages=u.customPages||(ROLE_DEFS[u.role]||{}).pages||[];return pages.length?pages[0]:"viagens";},
-};
-
-// ═══════════════════════════════════════════════════════════════
-//  GESTÃO DE CICLOS
-// ═══════════════════════════════════════════════════════════════
-const Ciclos = {
-  criar(nome, descricao, dataInicio){
-    const id = uid();
-    const ciclo = defaultCicloData(id, nome);
-    ciclo.descricao = descricao||"";
-    if(dataInicio) ciclo.dataInicio = dataInicio;
-    localStorage.setItem(cicloStorageKey(id), JSON.stringify(ciclo));
-    this.switchTo(id);
-    App.toast("Ciclo '"+nome+"' criado e ativado!");
-    return ciclo;
-  },
-  switchTo(id){
-    if(!id) return;
-    const ciclo = loadCiclo(id);
-    if(!ciclo){App.toast("Ciclo não encontrado","err");return;}
-    META.cicloAtivo = id;
-    CD = ciclo;
-    saveMeta();
-    this.updateSidebar();
-    document.getElementById("cicloBadge").textContent = CD.nome;
-    App.navigate(Auth.defaultPage());
-  },
-  updateSidebar(){
-    const ciclos = listCiclos();
-    const sel = document.getElementById("sidebarCicloSel");
-    if(!sel) return;
-    sel.innerHTML = ciclos.map(c=>
-      `<option value="${c.id}" ${META.cicloAtivo===c.id?"selected":""}>${c.nome}${c.status==="encerrado"?" ✓":c.status==="arquivado"?" 📦":""}</option>`
-    ).join("");
-    if(!ciclos.length) sel.innerHTML = `<option value="">— nenhum ciclo —</option>`;
-  },
-  encerrar(id){
-    const c = loadCiclo(id);if(!c)return;
-    if(!confirm(`Encerrar o ciclo "${c.nome}"? Ele ficará no histórico mas não poderá mais receber novos dados.`))return;
-    c.status="encerrado";c.dataFim=todayISO();
-    localStorage.setItem(cicloStorageKey(id),JSON.stringify(c));
-    if(META.cicloAtivo===id) CD=c;
-    App.toast("Ciclo encerrado.");App.navigate("ciclos");
-  },
-  arquivar(id){
-    const c = loadCiclo(id);if(!c)return;
-    if(!confirm(`Arquivar "${c.nome}"?`))return;
-    c.status="arquivado";
-    localStorage.setItem(cicloStorageKey(id),JSON.stringify(c));
-    App.toast("Arquivado.");App.navigate("ciclos");
-  },
-  excluir(id){
-    const c = loadCiclo(id);if(!c)return;
-    if(!confirm(`EXCLUIR permanentemente "${c.nome}"? Todos os dados serão perdidos.`))return;
-    localStorage.removeItem(cicloStorageKey(id));
-    if(META.cicloAtivo===id){META.cicloAtivo=null;CD=null;saveMeta();}
-    App.toast("Ciclo excluído.");App.navigate("ciclos");
-  },
-  exportCicloAtual(){
-    if(!CD){App.toast("Nenhum ciclo ativo","err");return;}
-    const blob=new Blob([JSON.stringify({meta_export:true,ciclo:CD},null,2)],{type:"application/json"});
-    const u=URL.createObjectURL(blob);const a=document.createElement("a");
-    a.href=u;a.download="backup_"+CD.nome.replace(/\s/g,"_")+"_"+todayISO()+".json";
-    a.click();URL.revokeObjectURL(u);App.toast("Backup do ciclo exportado!");
-  },
-  exportTudo(){
-    const ciclos=listCiclos();
-    if(!ciclos.length){App.toast("Nenhum ciclo para exportar","err");return;}
-    const blob=new Blob([JSON.stringify({meta_export_all:true,versao:"2",exportadoEm:new Date().toISOString(),meta:{users:META.users},ciclos},null,2)],{type:"application/json"});
-    const u=URL.createObjectURL(blob);const a=document.createElement("a");
-    a.href=u;a.download="backup_completo_organopara_"+todayISO()+".json";
-    a.click();URL.revokeObjectURL(u);
-    App.toast(`Backup completo: ${ciclos.length} ciclo(s) exportado(s)!`);
-  },
-  importarBackup(){
-    const inp=document.createElement("input");inp.type="file";inp.accept=".json";
-    inp.onchange=e=>{
-      const f=e.target.files[0];if(!f)return;
-      const r=new FileReader();r.onload=ev=>{
-        try{
-          const data=JSON.parse(ev.target.result);
-          // Handle full backup (all ciclos)
-          if(data.meta_export_all&&data.ciclos){
-            let count=0;
-            data.ciclos.forEach(c=>{
-              const newId=uid();c.id=newId;c.nome+=" (restaurado)";
-              localStorage.setItem(cicloStorageKey(newId),JSON.stringify(c));count++;
-            });
-            if(data.meta&&data.meta.users)META.users=data.meta.users;
-            saveMeta();Ciclos.updateSidebar();
-            App.toast(`${count} ciclo(s) restaurado(s) com sucesso!`);
-            App.navigate("ciclos");return;
-          }
-          // Handle single ciclo backup
-          const cicloData=data.ciclo||data;
-          if(!cicloData.id||!cicloData.nome)throw new Error("Formato inválido");
-          const newId=uid();cicloData.id=newId;
-          cicloData.nome+=" (restaurado)";
-          localStorage.setItem(cicloStorageKey(newId),JSON.stringify(cicloData));
-          this.switchTo(newId);App.toast("Backup do ciclo restaurado com sucesso!");
-        }catch(err){App.toast("Arquivo inválido: "+err.message,"err");}
-      };r.readAsText(f);
-    };inp.click();
-  },
-};
-
-// ═══════════════════════════════════════════════════════════════
-//  CALC ENGINE
-// ═══════════════════════════════════════════════════════════════
-const Calc = {
-  pesoLiqViagem(v){return(parseFloat(v.pesoBruto)||0)*(1-(parseFloat(v.umidade)||0));},
-  viagensDaLeira(p,l){return STATE.viagens.filter(v=>v.patio===p&&v.leira===l);},
-  resumoLev(p,l){
-    const vs=this.viagensDaLeira(p,l);let pb=0,pliq=0;
-    vs.forEach(v=>{pb+=parseFloat(v.pesoBruto)||0;pliq+=this.pesoLiqViagem(v);});
-    return{nViagens:vs.length,pesoBruto:pb,pesoLiquido:pliq,umidMedia:pb>0?(1-pliq/pb):0};
-  },
-  pesoBase(p,l){const mo=STATE.taxas.materiaisOrganicos.taxa||0.8;return mo?this.resumoLev(p,l).pesoLiquido/mo:0;},
-  qtdInsumo(p,l,key){
-    const base=this.pesoBase(p,l);const t=STATE.taxas[key];if(!t||!base)return 0;
-    let v=DOSE_TON.has(key)?(base/1000)*t.taxa:base*t.taxa;
-    if(COM_UMIDADE.has(key)&&t.umidade<1)v=v/(1-t.umidade);
-    return v;
-  },
-  enrCompleto(p,l){const base=this.pesoBase(p,l);const out={pesoBase:base};TAXA_ORDER.forEach(k=>{if(k!=="materiaisOrganicos")out[k]=this.qtdInsumo(p,l,k);});return out;},
-  regsMon(p,l){return STATE.monitoramento.filter(m=>m.patio===p&&m.leira===l).sort((a,b)=>(a.data||"").localeCompare(b.data||""));},
-  mediaTemp(m){const pts=[m.p1,m.p2,m.p3,m.p4].map(parseFloat).filter(v=>!isNaN(v));return pts.length?pts.reduce((a,b)=>a+b,0)/pts.length:null;},
-  alertaTemp(med){if(med===null)return null;if(med<45)return{txt:"Fria",cls:"baz"};if(med>70)return{txt:"Crítica",cls:"br"};if(med>65)return{txt:"Alta",cls:"ba"};return{txt:"Ideal",cls:"bv"};},
-  alertaPH(ph){const v=parseFloat(ph);if(isNaN(v))return null;if(v<6.5)return{txt:"Ácido",cls:"ba"};if(v>8)return{txt:"Alcalino",cls:"ba"};return{txt:"OK",cls:"bv"};},
-  alertaUmid(u){const v=parseFloat(u);if(isNaN(v))return null;if(v<0.40)return{txt:"Seca",cls:"br"};if(v>0.60)return{txt:"Úmida",cls:"ba"};return{txt:"OK",cls:"bv"};},
-  resumoMon(p,l){const rs=this.regsMon(p,l);const ts=rs.map(r=>this.mediaTemp(r)).filter(v=>v!==null);const phs=rs.map(r=>parseFloat(r.ph)).filter(v=>!isNaN(v));const us=rs.map(r=>parseFloat(r.umidade)).filter(v=>!isNaN(v));const avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;return{n:rs.length,tempMedia:avg(ts),tempMax:ts.length?Math.max(...ts):null,phMedio:avg(phs),umidMedia:avg(us),ultimaData:rs.length?rs[rs.length-1].data:null};},
-  regsGas(p,l){return STATE.gases.filter(g=>g.patio===p&&g.leira===l).sort((a,b)=>(a.data||"").localeCompare(b.data||""));},
-  mediaCO2(g){const pts=[g.co2a,g.co2b,g.co2c].map(parseFloat).filter(v=>!isNaN(v));return pts.length?pts.reduce((a,b)=>a+b,0)/pts.length:null;},
-  resumoGas(p,l){const rs=this.regsGas(p,l);const avg=arr=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:null;return{n:rs.length,co2:avg(rs.map(r=>this.mediaCO2(r)).filter(v=>v!==null)),o2:avg(rs.map(r=>parseFloat(r.o2)).filter(v=>!isNaN(v))),nh3:avg(rs.map(r=>parseFloat(r.nh3)).filter(v=>!isNaN(v)))};},
-  revsLeira(p,l){const k=leiraKey(p,l);return((STATE.revolvimento[k]||{}).entries||[]).filter(e=>e.data);},
-  diasDesdeHoje(ini){if(!ini)return null;return Math.round((new Date()-new Date(ini))/86400000);},
-  bioStatus(p,l,bioKey,ini){
-    const key=leiraKey(p,l);const rec=(STATE.bioinsumos[key]||{})[bioKey];const aplicado=rec&&rec.data;
-    const periodos={bioRaiz:[0,5],bioSolub:[10,15],bioRelease:[25,30],bioAZ:[40,45]};const[dmin,dmax]=periodos[bioKey];
-    if(aplicado)return{status:"aplicado",label:"Aplicado em "+fmtDate(rec.data)};
-    if(!ini)return{status:"aguardando",label:`Aguardar (dia ${dmin}–${dmax})`};
-    const dias=this.diasDesdeHoje(ini);
-    if(dias>=dmax)return{status:"atrasado",label:"Não aplicado!"};if(dias>=dmin)return{status:"aplicar",label:"Aplicar agora!"};
-    return{status:"aguardando",label:`Aguardar (dia ${dmin}–${dmax})`};
-  },
-  etapasConcluidas(p,l){const et=((STATE.painel[leiraKey(p,l)]||{}).etapas)||{};let n=0;ETAPAS.forEach(e=>{if(et[e.key])n++;});return{count:n,total:ETAPAS.length,pct:n/ETAPAS.length};},
-  dadosPainel(p,l){
-    const key=leiraKey(p,l);const pan=STATE.painel[key]||{};const lev=STATE.levantamento[key]||{};
-    const ini=lev.dataInicio||pan.dataInicio||null;const dias=this.diasDesdeHoje(ini);const dr=dias!==null?Math.max(0,PRAZO_DIAS-dias):null;
-    const et=this.etapasConcluidas(p,l);const enr=this.enrCompleto(p,l);const pesoE=enr.pesoBase;
-    const colh=STATE.colheita[key]||{};const pesoS=parseFloat(colh.peso);
-    // Peso estimado na saída considerando umidade residual do produto
-    const umidSaida=STATE.taxas.umidadeSaida?STATE.taxas.umidadeSaida.taxa:0.25;
-    const pesoEstimado=(pesoE&&umidSaida<1)?pesoE/(1-umidSaida):null;
-    let qkg=null,qpct=null,efic=null;
-    if(!isNaN(pesoS)&&pesoE){qkg=pesoE-pesoS;qpct=qkg/pesoE;efic=pesoS/pesoE;}
-    let status="Aguardando";
-    if(!ini)status="Aguardando";else if(!isNaN(pesoS))status="Colhido";else if(et.count===6)status="Pronto p/ colheita";else if(dr!==null&&dr<=5)status="Crítico";else if(dr!==null&&dr<=10)status="Atenção";else status="Em processo";
-    return{ini,dias,dr,et,pesoEntrada:pesoE,pesoSaida:isNaN(pesoS)?null:pesoS,pesoEstimado,umidSaida,quebraKg:qkg,quebraPct:qpct,eficiencia:efic,status,previsao:ini?addDays(ini,PRAZO_DIAS):null};
-  },
-  leirasAtivas(){const out=[];PATIOS.forEach(p=>LEIRAS.forEach(l=>{const lev=STATE.levantamento[leiraKey(p,l)];if(lev&&lev.dataInicio)out.push({patio:p,leira:l});}));return out;},
-  panoramaPatio(patio){
-    const ls=LEIRAS.filter(l=>{const lev=STATE.levantamento[leiraKey(patio,l)];return lev&&lev.dataInicio;});const total=ls.length;if(!total)return{total:0,enriq:0,bio:0,mon:0,col:0};
-    let enriq=0,bio=0,mon=0,col=0;
-    ls.forEach(l=>{const key=leiraKey(patio,l);const et=((STATE.painel[key]||{}).etapas)||{};if(et.enriquecimento)enriq++;if(et.monitoramento)mon++;const bd=STATE.bioinsumos[key]||{};if(BIOINSUMOS_DEF.every(b=>bd[b.key]&&bd[b.key].data))bio++;const colh=STATE.colheita[key]||{};if(!isNaN(parseFloat(colh.peso)))col++;});
-    return{total,enriq:enriq/total,bio:bio/total,mon:mon/total,col:col/total};
-  },
-};
-
-// Helpers
-function fmtDate(iso){if(!iso)return"—";const[y,m,d]=iso.split("-");return d&&m&&y?`${d}/${m}/${y}`:iso;}
-function addDays(iso,n){const d=new Date(iso);d.setDate(d.getDate()+n);return d.toISOString().slice(0,10);}
-function todayISO(){return new Date().toISOString().slice(0,10);}
-function fmtNum(v,dec=1){if(v===null||v===undefined||isNaN(v))return"—";return v.toLocaleString("pt-BR",{minimumFractionDigits:dec,maximumFractionDigits:dec});}
-function fmtPct(v,dec=0){if(v===null||v===undefined||isNaN(v))return"—";return(v*100).toLocaleString("pt-BR",{minimumFractionDigits:dec,maximumFractionDigits:dec})+"%";}
-function statusBadge(s){const m={"Aguardando":"bc","Em processo":"bv","Atenção":"ba","Crítico":"br","Pronto p/ colheita":"baz","Colhido":"bm"};return`<span class="badge ${m[s]||"bc"}">${s}</span>`;}
-function prazoBadge(dr){if(dr===null)return`<span class="badge bc">—</span>`;const c=dr<=5?"br":dr<=10?"ba":"bv";return`<span class="badge ${c}">${dr}d</span>`;}
-function stageBar(p,l){
-  const et=((STATE.painel[leiraKey(p,l)]||{}).etapas)||{};
-  const segs=ETAPAS.map((e,i)=>{const done=!!et[e.key];const prev=i===0||!!et[ETAPAS[i-1].key];return`<div class="stage-seg ${done?"done":prev?"active":""}" title="${e.label}"></div>`;}).join("");
-  const cnt=Calc.etapasConcluidas(p,l);
-  return`<div class="stage-track">${segs}</div><div class="stage-labels"><span>${ETAPAS[0].label}</span><span style="font-weight:700;color:var(--laranja)">${cnt.count}/6 etapas</span><span>${ETAPAS[5].label}</span></div>`;
-}
-
-// ═══════════════════════════════════════════════════════════════
-//  NAVIGATION
-// ═══════════════════════════════════════════════════════════════
-const PAGE_DEFS = [
-  {id:"ciclos",      label:"Ciclos de Produção",   icon:"ti-calendar-stats",  group:"Administração"},
-  {id:"usuarios",    label:"Cadastro de Usuários",  icon:"ti-users",           group:"Administração"},
-  {id:"ficha",       label:"Ficha da Leira",        icon:"ti-clipboard-list",  group:"Produção",filtro:true},
-  {id:"viagens",     label:"Viagens MP",            icon:"ti-truck",           group:"Produção"},
-  {id:"levantamento",label:"Levantamento",          icon:"ti-scale",           group:"Produção"},
-  {id:"enriquecimento",label:"Enriquecimento",      icon:"ti-flask",           group:"Produção",filtro:true},
-  {id:"aplinsumos",  label:"Aplic. de Insumos",     icon:"ti-box",             group:"Produção"},
-  {id:"bioinsumos",  label:"Bioinsumos",            icon:"ti-plant-2",         group:"Produção",filtro:true},
-  {id:"monitoramento",label:"Monitoramento",        icon:"ti-thermometer",     group:"Produção"},
-  {id:"revolvimento",label:"Revolvimento",          icon:"ti-refresh",         group:"Produção"},
-  {id:"gases",       label:"Gases",                icon:"ti-wind",            group:"Produção"},
-  {id:"colheita",    label:"Colheita / Saída",      icon:"ti-plant",           group:"Produção"},
-  {id:"taxas",       label:"Taxas Enriquecimento",  icon:"ti-settings",        group:"Configuração"},
-  {id:"relatorio",   label:"Relatórios / PDF",      icon:"ti-file-text",       group:"Configuração"},
-  {id:"painel",      label:"Painel Geral",          icon:"ti-layout-grid",     group:"Configuração"},
-  {id:"combustivel", label:"Combustível",          icon:"ti-droplet",     group:"Operacional"},
-];
-
-
-const Calc = {
-  pesoLiqViagem(v){return(parseFloat(v.pesoBruto)||0)*(1-(parseFloat(v.umidade)||0));},
-  viagensDaLeira(p,l){return STATE.viagens.filter(v=>v.patio===p&&v.leira===l);},
-  resumoLev(p,l){
-    const vs=this.viagensDaLeira(p,l);let pb=0,pliq=0;
-    vs.forEach(v=>{pb+=parseFloat(v.pesoBruto)||0;pliq+=this.pesoLiqViagem(v);});
-    return{nViagens:vs.length,pesoBruto:pb,pesoLiquido:pliq,umidMedia:pb>0?(1-pliq/pb):0};
-  },
-  pesoBase(p,l){const mo=STATE.taxas.materiaisOrganicos.taxa||0.8;return mo?this.resumoLev(p,l).pesoLiquido/mo:0;},
-  qtdInsumo(p,l,key){
-    const base=this.pesoBase(p,l);const t=STATE.taxas[key];if(!t||!base)return 0;
-    let v=DOSE_TON.has(key)?(base/1000)*t.taxa:base*t.taxa;
-    if(COM_UMIDADE.has(key)&&t.umidade<1)v=v/(1-t.umidade);
-    return v;
-  },
-  enrCompleto(p,l){const base=this.pesoBase(p,l);const out={pesoBase:base};TAXA_ORDER.forEach(k=>{if(k!=="materiaisOrganicos")out[k]=this.qtdInsumo(p,l,k);});return out;},
-  regsMon(p,l){return STATE.monitoramento.filter(m=>m.patio===p&&m.leira===l).sort((a,b)=>(a.data||"").localeCompare(b.data||""));},
-  mediaTemp(m){const pts=[m.p1,m.p2,m.p3,m.p4].map(parseFloat).filter(v=>!isNaN(v));return pts.length?pts.reduce((a,b)=>a+b,0)/pts.length:null;},
-  alertaTemp(med){if(med===null)return null;if(med<45)return{txt:"Fria",cls:"baz"};if(med>70)return{txt:"Crítica",cls:"br"};if(med>65)return{txt:"Alta",cls:"ba"};return{txt:"Ideal",cls:"bv"};},
-  alertaPH(ph){const v=parseFloat(ph);if(isNaN(v))return null;if(v<6.5)return{txt:"Ácido",cls:"ba"};if(v>8)return{txt:"Alcalino",cls:"ba"};return{txt:"OK",cls:"bv"};},
-  alertaUmid(u){const v=parseFloat(u);if(isNaN(v))return null;if(v<0.40)return{txt:"Seca",cls:"br"};if(v>0.60)return{txt:"Úmida",cls:"ba"};return{txt:"OK",cls:"bv"};},
-  resumoMon(p,l){const rs=this.regsMon(p,l);const ts=rs.map(r=>this.mediaTemp(r)).filter(v=>v!==null);const phs=rs.map(r=>parseFloat(r.ph)).filter(v=>!isNaN(v));const us=rs.map(r=>parseFloat(r.umidade)).filter(v=>!isNaN(v));const avg=a=>a.length?a.reduce((x,y)=>x+y,0)/a.length:null;return{n:rs.length,tempMedia:avg(ts),tempMax:ts.length?Math.max(...ts):null,phMedio:avg(phs),umidMedia:avg(us),ultimaData:rs.length?rs[rs.length-1].data:null};},
-  regsGas(p,l){return STATE.gases.filter(g=>g.patio===p&&g.leira===l).sort((a,b)=>(a.data||"").localeCompare(b.data||""));},
-  mediaCO2(g){const pts=[g.co2a,g.co2b,g.co2c].map(parseFloat).filter(v=>!isNaN(v));return pts.length?pts.reduce((a,b)=>a+b,0)/pts.length:null;},
-  resumoGas(p,l){const rs=this.regsGas(p,l);const avg=arr=>arr.length?arr.reduce((a,b)=>a+b,0)/arr.length:null;return{n:rs.length,co2:avg(rs.map(r=>this.mediaCO2(r)).filter(v=>v!==null)),o2:avg(rs.map(r=>parseFloat(r.o2)).filter(v=>!isNaN(v))),nh3:avg(rs.map(r=>parseFloat(r.nh3)).filter(v=>!isNaN(v)))};},
-  revsLeira(p,l){const k=leiraKey(p,l);return((STATE.revolvimento[k]||{}).entries||[]).filter(e=>e.data);},
-  diasDesdeHoje(ini){if(!ini)return null;return Math.round((new Date()-new Date(ini))/86400000);},
-  bioStatus(p,l,bioKey,ini){
-    const key=leiraKey(p,l);const rec=(STATE.bioinsumos[key]||{})[bioKey];const aplicado=rec&&rec.data;
-    const periodos={bioRaiz:[0,5],bioSolub:[10,15],bioRelease:[25,30],bioAZ:[40,45]};const[dmin,dmax]=periodos[bioKey];
-    if(aplicado)return{status:"aplicado",label:"Aplicado em "+fmtDate(rec.data)};
-    if(!ini)return{status:"aguardando",label:`Aguardar (dia ${dmin}–${dmax})`};
-    const dias=this.diasDesdeHoje(ini);
-    if(dias>=dmax)return{status:"atrasado",label:"Não aplicado!"};if(dias>=dmin)return{status:"aplicar",label:"Aplicar agora!"};
-    return{status:"aguardando",label:`Aguardar (dia ${dmin}–${dmax})`};
-  },
-  etapasConcluidas(p,l){const et=((STATE.painel[leiraKey(p,l)]||{}).etapas)||{};let n=0;ETAPAS.forEach(e=>{if(et[e.key])n++;});return{count:n,total:ETAPAS.length,pct:n/ETAPAS.length};},
-  dadosPainel(p,l){
-    const key=leiraKey(p,l);const pan=STATE.painel[key]||{};const lev=STATE.levantamento[key]||{};
-    const ini=lev.dataInicio||pan.dataInicio||null;const dias=this.diasDesdeHoje(ini);const dr=dias!==null?Math.max(0,PRAZO_DIAS-dias):null;
-    const et=this.etapasConcluidas(p,l);const enr=this.enrCompleto(p,l);const pesoE=enr.pesoBase;
-    const colh=STATE.colheita[key]||{};const pesoS=parseFloat(colh.peso);
-    // Peso estimado na saída considerando umidade residual do produto
-    const umidSaida=STATE.taxas.umidadeSaida?STATE.taxas.umidadeSaida.taxa:0.25;
-    const pesoEstimado=(pesoE&&umidSaida<1)?pesoE/(1-umidSaida):null;
-    let qkg=null,qpct=null,efic=null;
-    if(!isNaN(pesoS)&&pesoE){qkg=pesoE-pesoS;qpct=qkg/pesoE;efic=pesoS/pesoE;}
-    let status="Aguardando";
-    if(!ini)status="Aguardando";else if(!isNaN(pesoS))status="Colhido";else if(et.count===6)status="Pronto p/ colheita";else if(dr!==null&&dr<=5)status="Crítico";else if(dr!==null&&dr<=10)status="Atenção";else status="Em processo";
-    return{ini,dias,dr,et,pesoEntrada:pesoE,pesoSaida:isNaN(pesoS)?null:pesoS,pesoEstimado,umidSaida,quebraKg:qkg,quebraPct:qpct,eficiencia:efic,status,previsao:ini?addDays(ini,PRAZO_DIAS):null};
-  },
-  leirasAtivas(){const out=[];PATIOS.forEach(p=>LEIRAS.forEach(l=>{const lev=STATE.levantamento[leiraKey(p,l)];if(lev&&lev.dataInicio)out.push({patio:p,leira:l});}));return out;},
-  panoramaPatio(patio){
-    const ls=LEIRAS.filter(l=>{const lev=STATE.levantamento[leiraKey(patio,l)];return lev&&lev.dataInicio;});const total=ls.length;if(!total)return{total:0,enriq:0,bio:0,mon:0,col:0};
-    let enriq=0,bio=0,mon=0,col=0;
-    ls.forEach(l=>{const key=leiraKey(patio,l);const et=((STATE.painel[key]||{}).etapas)||{};if(et.enriquecimento)enriq++;if(et.monitoramento)mon++;const bd=STATE.bioinsumos[key]||{};if(BIOINSUMOS_DEF.every(b=>bd[b.key]&&bd[b.key].data))bio++;const colh=STATE.colheita[key]||{};if(!isNaN(parseFloat(colh.peso)))col++;});
-    return{total,enriq:enriq/total,bio:bio/total,mon:mon/total,col:col/total};
-  },
-};
-
-
-// Helpers
-function fmtDate(iso){if(!iso)return"—";const[y,m,d]=iso.split("-");return d&&m&&y?`${d}/${m}/${y}`:iso;}
-function addDays(iso,n){const d=new Date(iso);d.setDate(d.getDate()+n);return d.toISOString().slice(0,10);}
-function todayISO(){return new Date().toISOString().slice(0,10);}
-function fmtNum(v,dec=1){if(v===null||v===undefined||isNaN(v))return"—";return v.toLocaleString("pt-BR",{minimumFractionDigits:dec,maximumFractionDigits:dec});}
-function fmtPct(v,dec=0){if(v===null||v===undefined||isNaN(v))return"—";return(v*100).toLocaleString("pt-BR",{minimumFractionDigits:dec,maximumFractionDigits:dec})+"%";}
-function statusBadge(s){const m={"Aguardando":"bc","Em processo":"bv","Atenção":"ba","Crítico":"br","Pronto p/ colheita":"baz","Colhido":"bm"};return`<span class="badge ${m[s]||"bc"}">${s}</span>`;}
-function prazoBadge(dr){if(dr===null)return`<span class="badge bc">—</span>`;const c=dr<=5?"br":dr<=10?"ba":"bv";return`<span class="badge ${c}">${dr}d</span>`;}
-function stageBar(p,l){
-  const et=((STATE.painel[leiraKey(p,l)]||{}).etapas)||{};
-  const segs=ETAPAS.map((e,i)=>{const done=!!et[e.key];const prev=i===0||!!et[ETAPAS[i-1].key];return`<div class="stage-seg ${done?"done":prev?"active":""}" title="${e.label}"></div>`;}).join("");
-  const cnt=Calc.etapasConcluidas(p,l);
-  return`<div class="stage-track">${segs}</div><div class="stage-labels"><span>${ETAPAS[0].label}</span><span style="font-weight:700;color:var(--laranja)">${cnt.count}/6 etapas</span><span>${ETAPAS[5].label}</span></div>`;
-}
-
 
 const Auth = {
   async login(){
