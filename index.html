@@ -994,8 +994,12 @@ Pages._saveUser=function(){
   if(id){
     _sb.from("usuarios").update(urow).eq("id",id).then(({error})=>{
       if(error){App.toast("Erro: "+error.message,"err");return;}
-      const u=META.users.find(x=>x.id===id);
+      const u=META.users.find(x=>String(x.id)===String(id));
       if(u){u.user=user;u.senha=senha;u.role=role;}
+      // Reload users from Supabase to get fresh data
+      _sb.from("usuarios").select("*").then(({data})=>{
+        if(data)META.users=data.map(u=>({id:u.id,user:u.username,senha:u.senha,role:u.role,customPages:null,ativo:u.ativo}));
+      });
       App.closeModal("modal-user");App.navigate("usuarios");App.toast("Usuário salvo!");
     });
   } else {
