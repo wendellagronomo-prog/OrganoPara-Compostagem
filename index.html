@@ -4,16 +4,17 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="theme-color" content="#1b4332">
+<meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Organo Pará">
-
 <title>Organo Pará — Controle de Compostagem</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/tabler-icons/2.44.0/iconfont/tabler-icons.min.css">
 <link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,500;9..144,600&family=Source+Sans+3:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
+
 :root{
   --verde:#2d6a4f;--verde-esc:#1b4332;--verde-clr:#d8f3dc;--verde-med:#52b788;
   --laranja:#e07b2a;--laranja-clr:#fde9d4;--laranja-esc:#b85e15;
@@ -205,8 +206,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 
 @media(max-width:900px){.sidebar{display:none}.main{margin-left:0}}
 
-/* Toast info */
-#toast.toast-info{background:var(--verde);}</style>
+</style>
 </head>
 <body>
 
@@ -274,73 +274,371 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 
 
 <script>
-// ═══════════════════════════════════════════════════════════════
-//  SUPABASE CONFIG
-// ═══════════════════════════════════════════════════════════════
-const SUPABASE_URL = 'https://aceaaspekrwboslyfzol.supabase.co';
-const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFjZWFhc3Bla3J3Ym9zbHlmem9sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3MTc0MTcsImV4cCI6MjA5NzI5MzQxN30.DT-d2df0q2zk_ic8drOUgwIZXPKR7PWYJ_77DsBZ4RQ';
-const sb = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+// ═══════════════════════════════════════════════════════
+//  SUPABASE — autenticação e sincronização
+// ═══════════════════════════════════════════════════════
+const _sb = supabase.createClient('https://aceaaspekrwboslyfzol.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFjZWFhc3Bla3J3Ym9zbHlmem9sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3MTc0MTcsImV4cCI6MjA5NzI5MzQxN30.DT-d2df0q2zk_ic8drOUgwIZXPKR7PWYJ_77DsBZ4RQ');
+
+const SBAuth = {
+  async login(username, senha) {
+    const {data, error} = await _sb
+      .from('usuarios')
+      .select('*')
+      .eq('username', username)
+      .eq('senha_hash', senha)
+      .eq('ativo', true)
+      .single();
+    if (error) throw error;
+    if (!data) return null;
+    return {
+      id: data.id,
+      user: data.username,
+      senha: data.senha_hash,
+      role: data.role,
+      customPages: data.custom_pages
+    };
+  },
+};
+// ═══════════════════════════════════════════════════════
+
 
 // ═══════════════════════════════════════════════════════════════
-//  ESTADO GLOBAL (em memória, sincronizado com Supabase)
+//  CONSTANTES
 // ═══════════════════════════════════════════════════════════════
-let CD = null;       // ciclo ativo (dados em memória)
-let META = {
-  currentUser: null,
-  users: [],
-  cicloAtivo: null,
-  filtro: { patio: 'Matriz - Concórdia', leira: '1-A' },
+const PATIOS = ["Matriz - Concórdia","Filial - Acará","Filial - Moju","Filial - Tailândia"];
+const LEIRAS = [];
+for(let n=1;n<=50;n++){LEIRAS.push(n+"-A");LEIRAS.push(n+"-B");}
+const TIPOS_MP = ["Cacho de dendê","Fibra","Cinza","Misto","Outro"];
+const ETAPAS = [
+  {key:"levantamento",label:"1. Levantamento"},{key:"enriquecimento",label:"2. Enriquecimento"},
+  {key:"insumos",label:"3. Aplic. Insumos"},{key:"monitoramento",label:"4. Monitoramento"},
+  {key:"gases",label:"5. Gases"},{key:"revolvimento",label:"6. Revolvimento"},
+];
+const PRAZO_DIAS = 65;
+const ATIVIDADE_BIO = ["Muito baixa","Baixa","Média","Alta","Muito alta"];
+const UMIDADE_AMBIENTE = ["Muito instável","Instável","Pouco estável","Estável","Muito estável"];
+const RECOMENDACOES = ["Nenhuma","Revolver","Molhar","Revolver e Molhar"];
+const FORMAS_APLICACAO = ["Chorumeiro","Caminhão tanque","Fertirrigação"];
+const BIOINSUMOS_DEF = [
+  {key:"bioRaiz",nome:"Bio RAIZ",periodo:"Dia 0–5"},
+  {key:"bioSolub",nome:"Bio Solubilize",periodo:"Dia 10–15"},
+  {key:"bioRelease",nome:"Bio Release",periodo:"Dia 25–30"},
+  {key:"bioAZ",nome:"Bio AZ",periodo:"Dia 40–45"},
+];
+const TAXA_ORDER = ["materiaisOrganicos","umidadeSaida","camaFrango","fosfatoNatural","ureia","kcl","map","outrosInsumos","bioRaiz","bioSolub","bioRelease","bioAZ","bokashi","trikoSoil"];
+const TAXA_LABELS = {materiaisOrganicos:"Materiais Orgânicos",umidadeSaida:"Umidade Saída (produto)",camaFrango:"Cama de Frango",fosfatoNatural:"Fosfato Natural",ureia:"Ureia",kcl:"KCl",map:"MAP",outrosInsumos:"Outros Insumos",bioRaiz:"Bio RAIZ",bioSolub:"Bio Solubilize",bioRelease:"Bio Release",bioAZ:"Bio AZ",bokashi:"Bokashi",trikoSoil:"Triko Soil"};
+const DOSE_TON = new Set(["bioRaiz","bioSolub","bioRelease","bioAZ","bokashi","trikoSoil"]);
+const COM_UMIDADE = new Set(["camaFrango","fosfatoNatural","ureia","kcl","map","outrosInsumos","bokashi","trikoSoil"]);
+const TAXAS_DEFAULT = {
+  materiaisOrganicos:{taxa:0.80,unidade:"% sobre peso líquido total",umidade:null,obs:"Define o PESO BASE"},
+  umidadeSaida:{taxa:0.25,unidade:"% umidade do produto na saída",umidade:null,obs:"Peso estimado = Peso Base ÷ (1 − Umidade Saída)"},
+  camaFrango:{taxa:0.15,unidade:"% sobre peso base",umidade:0.20,obs:""},
+  fosfatoNatural:{taxa:0.05,unidade:"% sobre peso base",umidade:0.00,obs:""},
+  ureia:{taxa:0.00,unidade:"% sobre peso base",umidade:0.00,obs:""},
+  kcl:{taxa:0.00,unidade:"% sobre peso base",umidade:0.00,obs:""},
+  map:{taxa:0.00,unidade:"% sobre peso base",umidade:0.00,obs:""},
+  outrosInsumos:{taxa:0.00,unidade:"% sobre peso base",umidade:0.00,obs:""},
+  bioRaiz:{taxa:1.00,unidade:"L por tonelada",umidade:null,obs:""},
+  bioSolub:{taxa:0.50,unidade:"L por tonelada",umidade:null,obs:""},
+  bioRelease:{taxa:0.20,unidade:"L por tonelada",umidade:null,obs:""},
+  bioAZ:{taxa:0.15,unidade:"L por tonelada",umidade:null,obs:""},
+  bokashi:{taxa:0.00,unidade:"kg por tonelada",umidade:0.00,obs:""},
+  trikoSoil:{taxa:2.00,unidade:"kg por tonelada",umidade:0.00,obs:""},
 };
 
-// Proxy STATE para compatibilidade com o código existente
-const STATE = new Proxy({}, {
+// ═══════════════════════════════════════════════════════════════
+//  ESTRUTURA DE ARMAZENAMENTO
+//
+//  localStorage["organopara_meta"] = {
+//    currentUser: {...},
+//    users: [...],
+//    cicloAtivo: "ciclo_id",
+//    filtro: {patio, leira}
+//  }
+//  localStorage["organopara_ciclo_{id}"] = {
+//    id, nome, descricao, dataInicio, dataFim, status, criadoEm,
+//    taxas, viagens, levantamento, monitoramento, gases,
+//    revolvimento, bioinsumos, aplinsumos, painel, colheita
+//  }
+// ═══════════════════════════════════════════════════════════════
+const META_KEY = "organopara_meta_v3";
+
+function defaultMeta(){
+  return {
+    currentUser: null,
+    users:[
+      {id:"master",user:"master",senha:"master123",role:"master"},
+      {id:"u01",user:"usuario01",senha:"user01",role:"user01"},
+      {id:"u02",user:"usuario02",senha:"user02",role:"user02"},
+      {id:"u03",user:"usuario03",senha:"user03",role:"user03"},
+      {id:"u04",user:"usuario04",senha:"user04",role:"user04"},
+      {id:"u05",user:"usuario05",senha:"user05",role:"user05"},
+    ],
+    cicloAtivo: null,
+    filtro: {patio:PATIOS[0], leira:LEIRAS[0]},
+  };
+}
+
+function defaultCicloData(id, nome){
+  return {
+    id, nome,
+    descricao: "",
+    dataInicio: todayISO(),
+    dataFim: null,
+    status: "ativo",   // ativo | encerrado | arquivado
+    criadoEm: new Date().toISOString(),
+    taxas: JSON.parse(JSON.stringify(TAXAS_DEFAULT)),
+    viagens: [],
+    levantamento: {},
+    monitoramento: [],
+    gases: [],
+    revolvimento: {},
+    bioinsumos: {},
+    aplinsumos: {},
+    painel: {},
+    colheita: {},
+    combustivel: {
+      equipamentos: [],
+      entradas: [],
+      saidas: [],
+    },
+  };
+}
+
+let META = null;  // meta state (users, cicloAtivo, filtro)
+let CD = null;    // current ciclo data
+
+function loadMeta(){
+  try{const r=localStorage.getItem(META_KEY);if(r){META=Object.assign(defaultMeta(),JSON.parse(r));return;}}catch(e){}
+  META=defaultMeta();
+}
+function saveMeta(){try{localStorage.setItem(META_KEY,JSON.stringify(META));}catch(e){App.toast("Erro ao salvar","err");}}
+
+function cicloStorageKey(id){return "organopara_ciclo_"+id;}
+
+function loadCiclo(id){
+  try{
+    const r=localStorage.getItem(cicloStorageKey(id));
+    if(r){
+      const c=JSON.parse(r);
+      // Migrate older ciclos that may be missing newer properties
+      if(!c.combustivel) c.combustivel={equipamentos:[],entradas:[],saidas:[]};
+      if(!c.combustivel.equipamentos) c.combustivel.equipamentos=[];
+      if(!c.combustivel.entradas) c.combustivel.entradas=[];
+      if(!c.combustivel.saidas) c.combustivel.saidas=[];
+      return c;
+    }
+  }catch(e){}
+  return null;
+}
+function saveCiclo(){
+  if(!CD||!CD.id)return;
+  try{
+    localStorage.setItem(cicloStorageKey(CD.id),JSON.stringify(CD));
+    CD._lastSaved=new Date().toISOString();
+    _updateLastSavedLabel();
+  }catch(e){App.toast("Erro ao salvar — armazenamento cheio? Faça um backup!","err");}
+}
+function _updateLastSavedLabel(){
+  const el=document.getElementById("lastSavedLabel");
+  if(!el)return;
+  const now=new Date();
+  el.textContent="Salvo: "+now.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
+}
+function saveState(){saveMeta();saveCiclo();}
+
+function listCiclos(){
+  const ids=[];
+  for(let i=0;i<localStorage.length;i++){
+    const k=localStorage.key(i);
+    if(k&&k.startsWith("organopara_ciclo_"))ids.push(k.replace("organopara_ciclo_",""));
+  }
+  return ids.map(id=>loadCiclo(id)).filter(Boolean).sort((a,b)=>b.criadoEm.localeCompare(a.criadoEm));
+}
+
+function leiraKey(p,l){return p+"|"+l;}
+function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
+
+// Aliases so Pages functions work unchanged (they reference STATE.*)
+const STATE = new Proxy({},{
   get(t,k){
-    if(k==='filtro') return META.filtro;
-    if(k==='taxas') return CD?CD.taxas:TAXAS_DEFAULT;
-    if(k==='viagens') return CD?CD.viagens:[];
-    if(k==='levantamento') return CD?CD.levantamento:{};
-    if(k==='monitoramento') return CD?CD.monitoramento:[];
-    if(k==='gases') return CD?CD.gases:[];
-    if(k==='revolvimento') return CD?CD.revolvimento:{};
-    if(k==='bioinsumos') return CD?CD.bioinsumos:{};
-    if(k==='aplinsumos') return CD?CD.aplinsumos:{};
-    if(k==='painel') return CD?CD.painel:{};
-    if(k==='colheita') return CD?CD.colheita:{};
-    if(k==='combustivel') return CD?CD.combustivel:{equipamentos:[],entradas:[],saidas:[]};
-    if(k==='ciclo') return CD?CD.nome:'—';
-    if(k==='currentUser') return META.currentUser;
-    if(k==='users') return META.users;
+    if(k==="filtro")return META.filtro;
+    if(k==="taxas")return CD?CD.taxas:TAXAS_DEFAULT;
+    if(k==="viagens")return CD?CD.viagens:[];
+    if(k==="levantamento")return CD?CD.levantamento:{};
+    if(k==="monitoramento")return CD?CD.monitoramento:[];
+    if(k==="gases")return CD?CD.gases:[];
+    if(k==="revolvimento")return CD?CD.revolvimento:{};
+    if(k==="bioinsumos")return CD?CD.bioinsumos:{};
+    if(k==="aplinsumos")return CD?CD.aplinsumos:{};
+    if(k==="painel")return CD?CD.painel:{};
+    if(k==="colheita")return CD?CD.colheita:{};
+    if(k==="combustivel")return CD?CD.combustivel:{equipamentos:[],entradas:[],saidas:[]};
+    if(k==="ciclo")return CD?CD.nome:"—";
+    if(k==="currentUser")return META.currentUser;
+    if(k==="users")return META.users;
     return undefined;
   },
   set(t,k,v){
-    if(k==='filtro'){META.filtro=v;return true;}
-    if(k==='viagens'&&CD){CD.viagens=v;return true;}
-    if(k==='monitoramento'&&CD){CD.monitoramento=v;return true;}
-    if(k==='gases'&&CD){CD.gases=v;return true;}
-    if(k==='users'){META.users=v;return true;}
+    if(k==="filtro"){META.filtro=v;return true;}
+    if(k==="taxas"&&CD){CD.taxas=v;return true;}
+    if(k==="viagens"&&CD){CD.viagens=v;return true;}
+    if(k==="monitoramento"&&CD){CD.monitoramento=v;return true;}
+    if(k==="gases"&&CD){CD.gases=v;return true;}
+    if(k==="users"){META.users=v;return true;}
     return true;
   }
 });
 
 // ═══════════════════════════════════════════════════════════════
-//  SUPABASE DATA LAYER
+//  AUTH / ROLES
 // ═══════════════════════════════════════════════════════════════
-// Helpers
-function fmtDate(iso){if(!iso)return"—";const[y,m,d]=iso.split("-");return d&&m&&y?`${d}/${m}/${y}`:iso;}
-function addDays(iso,n){const d=new Date(iso);d.setDate(d.getDate()+n);return d.toISOString().slice(0,10);}
-function todayISO(){return new Date().toISOString().slice(0,10);}
-function fmtNum(v,dec=1){if(v===null||v===undefined||isNaN(v))return"—";return v.toLocaleString("pt-BR",{minimumFractionDigits:dec,maximumFractionDigits:dec});}
-function fmtPct(v,dec=0){if(v===null||v===undefined||isNaN(v))return"—";return(v*100).toLocaleString("pt-BR",{minimumFractionDigits:dec,maximumFractionDigits:dec})+"%";}
-function statusBadge(s){const m={"Aguardando":"bc","Em processo":"bv","Atenção":"ba","Crítico":"br","Pronto p/ colheita":"baz","Colhido":"bm"};return`<span class="badge ${m[s]||"bc"}">${s}</span>`;}
-function prazoBadge(dr){if(dr===null)return`<span class="badge bc">—</span>`;const c=dr<=5?"br":dr<=10?"ba":"bv";return`<span class="badge ${c}">${dr}d</span>`;}
-function stageBar(p,l){
-  const et=((STATE.painel[leiraKey(p,l)]||{}).etapas)||{};
-  const segs=ETAPAS.map((e,i)=>{const done=!!et[e.key];const prev=i===0||!!et[ETAPAS[i-1].key];return`<div class="stage-seg ${done?"done":prev?"active":""}" title="${e.label}"></div>`;}).join("");
-  const cnt=Calc.etapasConcluidas(p,l);
-  return`<div class="stage-track">${segs}</div><div class="stage-labels"><span>${ETAPAS[0].label}</span><span style="font-weight:700;color:var(--laranja)">${cnt.count}/6 etapas</span><span>${ETAPAS[5].label}</span></div>`;
-}
+const ROLE_DEFS = {
+  master:  {label:"Usuário Master",   pages:["ciclos","usuarios","ficha","viagens","levantamento","enriquecimento","aplinsumos","bioinsumos","monitoramento","revolvimento","gases","colheita","taxas","relatorio","painel","combustivel"]},
+  user01:  {label:"Usuário 01",       pages:["viagens","monitoramento"]},
+  user02:  {label:"Usuário 02",       pages:["enriquecimento","aplinsumos"]},
+  user03:  {label:"Usuário 03",       pages:["bioinsumos"]},
+  user04:  {label:"Usuário 04",       pages:["revolvimento"]},
+  user05:  {label:"Usuário 05",       pages:["levantamento","relatorio","ficha"]},
+};
 
+const Auth = {
+  login(){
+    const user=document.getElementById("loginUser").value.trim();
+    const senha=document.getElementById("loginPass").value;
+    if(!user||!senha){document.getElementById("loginErr").textContent="Preencha usuário e senha.";return;}
+    document.getElementById("loginErr").textContent="Verificando...";
+    SBAuth.login(user,senha).then(found=>{
+      if(!found){document.getElementById("loginErr").textContent="Usuário ou senha incorretos.";return;}
+      META.currentUser=found;saveMeta();
+      document.getElementById("loginErr").textContent="";
+      document.getElementById("loginScreen").style.display="none";
+      document.getElementById("appShell").style.display="block";
+      App.init();
+    }).catch(err=>{
+      console.error("SB login err:",err);
+      document.getElementById("loginErr").textContent="Erro de conexão: "+(err.message||JSON.stringify(err));
+    });
+  },
+  logout(){
+    META.currentUser=null;saveMeta();
+    document.getElementById("appShell").style.display="none";
+    document.getElementById("loginScreen").style.display="flex";
+    document.getElementById("loginUser").value="";
+    document.getElementById("loginPass").value="";
+  },
+  canAccess(p){const u=META.currentUser;if(!u)return false;const pages=u.customPages||(ROLE_DEFS[u.role]||{}).pages||[];return pages.includes(p);},
+  defaultPage(){const u=META.currentUser;if(!u)return"viagens";const pages=u.customPages||(ROLE_DEFS[u.role]||{}).pages||[];return pages.length?pages[0]:"viagens";},
+};
 
+// ═══════════════════════════════════════════════════════════════
+//  GESTÃO DE CICLOS
+// ═══════════════════════════════════════════════════════════════
+const Ciclos = {
+  criar(nome, descricao, dataInicio){
+    const id = uid();
+    const ciclo = defaultCicloData(id, nome);
+    ciclo.descricao = descricao||"";
+    if(dataInicio) ciclo.dataInicio = dataInicio;
+    localStorage.setItem(cicloStorageKey(id), JSON.stringify(ciclo));
+    this.switchTo(id);
+    App.toast("Ciclo '"+nome+"' criado e ativado!");
+    return ciclo;
+  },
+  switchTo(id){
+    if(!id) return;
+    const ciclo = loadCiclo(id);
+    if(!ciclo){App.toast("Ciclo não encontrado","err");return;}
+    META.cicloAtivo = id;
+    CD = ciclo;
+    saveMeta();
+    this.updateSidebar();
+    document.getElementById("cicloBadge").textContent = CD.nome;
+    App.navigate(Auth.defaultPage());
+  },
+  updateSidebar(){
+    const ciclos = listCiclos();
+    const sel = document.getElementById("sidebarCicloSel");
+    if(!sel) return;
+    sel.innerHTML = ciclos.map(c=>
+      `<option value="${c.id}" ${META.cicloAtivo===c.id?"selected":""}>${c.nome}${c.status==="encerrado"?" ✓":c.status==="arquivado"?" 📦":""}</option>`
+    ).join("");
+    if(!ciclos.length) sel.innerHTML = `<option value="">— nenhum ciclo —</option>`;
+  },
+  encerrar(id){
+    const c = loadCiclo(id);if(!c)return;
+    if(!confirm(`Encerrar o ciclo "${c.nome}"? Ele ficará no histórico mas não poderá mais receber novos dados.`))return;
+    c.status="encerrado";c.dataFim=todayISO();
+    localStorage.setItem(cicloStorageKey(id),JSON.stringify(c));
+    if(META.cicloAtivo===id) CD=c;
+    App.toast("Ciclo encerrado.");App.navigate("ciclos");
+  },
+  arquivar(id){
+    const c = loadCiclo(id);if(!c)return;
+    if(!confirm(`Arquivar "${c.nome}"?`))return;
+    c.status="arquivado";
+    localStorage.setItem(cicloStorageKey(id),JSON.stringify(c));
+    App.toast("Arquivado.");App.navigate("ciclos");
+  },
+  excluir(id){
+    const c = loadCiclo(id);if(!c)return;
+    if(!confirm(`EXCLUIR permanentemente "${c.nome}"? Todos os dados serão perdidos.`))return;
+    localStorage.removeItem(cicloStorageKey(id));
+    if(META.cicloAtivo===id){META.cicloAtivo=null;CD=null;saveMeta();}
+    App.toast("Ciclo excluído.");App.navigate("ciclos");
+  },
+  exportCicloAtual(){
+    if(!CD){App.toast("Nenhum ciclo ativo","err");return;}
+    const blob=new Blob([JSON.stringify({meta_export:true,ciclo:CD},null,2)],{type:"application/json"});
+    const u=URL.createObjectURL(blob);const a=document.createElement("a");
+    a.href=u;a.download="backup_"+CD.nome.replace(/\s/g,"_")+"_"+todayISO()+".json";
+    a.click();URL.revokeObjectURL(u);App.toast("Backup do ciclo exportado!");
+  },
+  exportTudo(){
+    const ciclos=listCiclos();
+    if(!ciclos.length){App.toast("Nenhum ciclo para exportar","err");return;}
+    const blob=new Blob([JSON.stringify({meta_export_all:true,versao:"2",exportadoEm:new Date().toISOString(),meta:{users:META.users},ciclos},null,2)],{type:"application/json"});
+    const u=URL.createObjectURL(blob);const a=document.createElement("a");
+    a.href=u;a.download="backup_completo_organopara_"+todayISO()+".json";
+    a.click();URL.revokeObjectURL(u);
+    App.toast(`Backup completo: ${ciclos.length} ciclo(s) exportado(s)!`);
+  },
+  importarBackup(){
+    const inp=document.createElement("input");inp.type="file";inp.accept=".json";
+    inp.onchange=e=>{
+      const f=e.target.files[0];if(!f)return;
+      const r=new FileReader();r.onload=ev=>{
+        try{
+          const data=JSON.parse(ev.target.result);
+          // Handle full backup (all ciclos)
+          if(data.meta_export_all&&data.ciclos){
+            let count=0;
+            data.ciclos.forEach(c=>{
+              const newId=uid();c.id=newId;c.nome+=" (restaurado)";
+              localStorage.setItem(cicloStorageKey(newId),JSON.stringify(c));count++;
+            });
+            if(data.meta&&data.meta.users)META.users=data.meta.users;
+            saveMeta();Ciclos.updateSidebar();
+            App.toast(`${count} ciclo(s) restaurado(s) com sucesso!`);
+            App.navigate("ciclos");return;
+          }
+          // Handle single ciclo backup
+          const cicloData=data.ciclo||data;
+          if(!cicloData.id||!cicloData.nome)throw new Error("Formato inválido");
+          const newId=uid();cicloData.id=newId;
+          cicloData.nome+=" (restaurado)";
+          localStorage.setItem(cicloStorageKey(newId),JSON.stringify(cicloData));
+          this.switchTo(newId);App.toast("Backup do ciclo restaurado com sucesso!");
+        }catch(err){App.toast("Arquivo inválido: "+err.message,"err");}
+      };r.readAsText(f);
+    };inp.click();
+  },
+};
+
+// ═══════════════════════════════════════════════════════════════
+//  CALC ENGINE
+// ═══════════════════════════════════════════════════════════════
 const Calc = {
   pesoLiqViagem(v){return(parseFloat(v.pesoBruto)||0)*(1-(parseFloat(v.umidade)||0));},
   viagensDaLeira(p,l){return STATE.viagens.filter(v=>v.patio===p&&v.leira===l);},
@@ -401,582 +699,42 @@ const Calc = {
   },
 };
 
-
-
-const DB = {
-
-  /* ── CICLOS ── */
-  async listCiclos(){
-    const {data,error} = await sb.from('ciclos').select('*').order('criado_em',{ascending:false});
-    if(error){console.error('listCiclos',error);return[];}
-    return data||[];
-  },
-  async criarCiclo(nome,descricao,dataInicio){
-    const {data,error} = await sb.from('ciclos').insert({nome,descricao,data_inicio:dataInicio,status:'ativo'}).select().single();
-    if(error)throw error;
-    return data;
-  },
-  async atualizarCiclo(id,campos){
-    const {error} = await sb.from('ciclos').update({...campos,updated_at:new Date().toISOString()}).eq('id',id);
-    if(error)throw error;
-  },
-  async excluirCiclo(id){
-    const {error} = await sb.from('ciclos').delete().eq('id',id);
-    if(error)throw error;
-  },
-
-  /* ── CARREGAR CICLO COMPLETO ── */
-  async carregarCiclo(cicloId){
-    const [
-      {data:viagens},{data:levRows},{data:monitoramento},{data:gases},
-      {data:revRows},{data:bioRows},{data:aplRows},{data:painelRows},
-      {data:colheitaRows},{data:taxasRows},{data:equipamentos},
-      {data:combEntradas},{data:combSaidas}
-    ] = await Promise.all([
-      sb.from('viagens').select('*').eq('ciclo_id',cicloId),
-      sb.from('levantamento').select('*').eq('ciclo_id',cicloId),
-      sb.from('monitoramento').select('*').eq('ciclo_id',cicloId),
-      sb.from('gases').select('*').eq('ciclo_id',cicloId),
-      sb.from('revolvimento').select('*').eq('ciclo_id',cicloId),
-      sb.from('bioinsumos').select('*').eq('ciclo_id',cicloId),
-      sb.from('aplinsumos').select('*').eq('ciclo_id',cicloId),
-      sb.from('painel').select('*').eq('ciclo_id',cicloId),
-      sb.from('colheita').select('*').eq('ciclo_id',cicloId),
-      sb.from('taxas').select('*').eq('ciclo_id',cicloId),
-      sb.from('equipamentos').select('*').eq('ciclo_id',cicloId),
-      sb.from('comb_entradas').select('*').eq('ciclo_id',cicloId),
-      sb.from('comb_saidas').select('*').eq('ciclo_id',cicloId),
-    ]);
-
-    // Normalize levantamento: array → object keyed by patio|leira
-    const levObj={};
-    (levRows||[]).forEach(r=>{levObj[leiraKey(r.patio,r.leira)]={dataInicio:r.data_inicio,supervisor:r.supervisor,obs:r.obs,_id:r.id};});
-
-    // revolvimento: array → object keyed by patio|leira with entries[]
-    const revObj={};
-    (revRows||[]).forEach(r=>{
-      const k=leiraKey(r.patio,r.leira);
-      if(!revObj[k])revObj[k]={entries:[]};
-      revObj[k].entries.push({data:r.data,operador:r.operador,_id:r.id});
-    });
-
-    // bioinsumos → nested object
-    const bioObj={};
-    (bioRows||[]).forEach(r=>{
-      const k=leiraKey(r.patio,r.leira);
-      if(!bioObj[k])bioObj[k]={};
-      bioObj[k][r.bio_key]={data:r.data,forma:r.forma,obs:r.obs,_id:r.id};
-    });
-
-    // aplinsumos → object
-    const aplObj={};
-    (aplRows||[]).forEach(r=>{
-      aplObj[leiraKey(r.patio,r.leira)]={
-        data:r.data,camaFrango:r.cama_frango,fosfatoNatural:r.fosfato_natural,
-        ureia:r.ureia,kcl:r.kcl,map:r.map,outrosInsumos:r.outros_insumos,
-        responsavel:r.responsavel,obs:r.obs,_id:r.id
-      };
-    });
-
-    // painel → object
-    const painelObj={};
-    (painelRows||[]).forEach(r=>{
-      painelObj[leiraKey(r.patio,r.leira)]={
-        etapas:{levantamento:r.etapa_levantamento,enriquecimento:r.etapa_enriquecimento,
-          insumos:r.etapa_insumos,monitoramento:r.etapa_monitoramento,
-          gases:r.etapa_gases,revolvimento:r.etapa_revolvimento},
-        gerente:r.gerente,_id:r.id
-      };
-    });
-
-    // colheita → object
-    const colheitaObj={};
-    (colheitaRows||[]).forEach(r=>{
-      colheitaObj[leiraKey(r.patio,r.leira)]={peso:r.peso,data:r.data,responsavel:r.responsavel,obs:r.obs,_id:r.id};
-    });
-
-    // taxas → object (merge with defaults)
-    const taxasObj=JSON.parse(JSON.stringify(TAXAS_DEFAULT));
-    (taxasRows||[]).forEach(r=>{
-      if(taxasObj[r.chave]){taxasObj[r.chave].taxa=parseFloat(r.taxa)||0;if(r.umidade!==null)taxasObj[r.chave].umidade=parseFloat(r.umidade);}
-    });
-
-    // Normalize viagens
-    const viagensNorm=(viagens||[]).map(v=>({
-      id:v.id,patio:v.patio,leira:v.leira,data:v.data,hora:v.hora,
-      placa:v.placa,ticket:v.ticket,fornecedor:v.fornecedor,tipoMP:v.tipo_mp,
-      pesoBruto:v.peso_bruto,umidade:v.umidade,nome:v.nome
-    }));
-
-    // Normalize monitoramento
-    const monNorm=(monitoramento||[]).map(m=>({
-      id:m.id,patio:m.patio,leira:m.leira,data:m.data,
-      p1:m.p1,p2:m.p2,p3:m.p3,p4:m.p4,ph:m.ph,umidade:m.umidade,aditivacao:m.aditivacao
-    }));
-
-    // Normalize gases
-    const gasNorm=(gases||[]).map(g=>({
-      id:g.id,patio:g.patio,leira:g.leira,data:g.data,
-      co2a:g.co2a,co2b:g.co2b,co2c:g.co2c,o2:g.o2,co:g.co,ch4:g.ch4,
-      h2s:g.h2s,nh3:g.nh3,atividade:g.atividade,recomendacao:g.recomendacao,
-      diasProduto:g.dias_produto
-    }));
-
-    // Combustível
-    const combObj={
-      equipamentos:(equipamentos||[]).map(e=>({id:e.id,nome:e.nome,tipo:e.tipo,placa:e.placa,obs:e.obs})),
-      entradas:(combEntradas||[]).map(e=>({id:e.id,data:e.data,litros:e.litros,fornecedor:e.fornecedor,nota:e.nota,obs:e.obs})),
-      saidas:(combSaidas||[]).map(s=>({id:s.id,data:s.data,hora:s.hora,eqId:s.equipamento_id,litros:s.litros,horimetro:s.horimetro,operador:s.operador,obs:s.obs})),
-    };
-
-    return {
-      viagens:viagensNorm,levantamento:levObj,monitoramento:monNorm,
-      gases:gasNorm,revolvimento:revObj,bioinsumos:bioObj,aplinsumos:aplObj,
-      painel:painelObj,colheita:colheitaObj,taxas:taxasObj,combustivel:combObj,
-    };
-  },
-
-  /* ── USUÁRIOS ── */
-  async listarUsuarios(){
-    const {data,error}=await sb.from('usuarios').select('id,username,role,custom_pages,ativo').order('username');
-    if(error){console.error(error);return[];}
-    return(data||[]).map(u=>({id:u.id,user:u.username,senha:'••••',role:u.role,customPages:u.custom_pages,ativo:u.ativo}));
-  },
-  async loginUsuario(username,senha){
-    const {data,error}=await sb.from('usuarios').select('*').eq('username',username).eq('senha_hash',senha).eq('ativo',true).single();
-    if(error){console.error('loginUsuario error:',error);throw error;}
-    if(!data)return null;
-    return{id:data.id,user:data.username,role:data.role,customPages:data.custom_pages};
-  },
-  async salvarUsuario(id,username,senha,role,customPages){
-    if(id){
-      const upd={username,role,custom_pages:customPages};
-      if(senha&&!senha.startsWith('•'))upd.senha_hash=senha;
-      const{error}=await sb.from('usuarios').update(upd).eq('id',id);
-      if(error)throw error;
-    }else{
-      const{error}=await sb.from('usuarios').insert({username,senha_hash:senha,role,custom_pages:customPages});
-      if(error)throw error;
-    }
-  },
-  async excluirUsuario(id){
-    const{error}=await sb.from('usuarios').delete().eq('id',id);
-    if(error)throw error;
-  },
-
-  /* ── WRITE OPERATIONS ── */
-  async addViagem(cicloId,v){
-    const{data,error}=await sb.from('viagens').insert({ciclo_id:cicloId,patio:v.patio,leira:v.leira,data:v.data,hora:v.hora||null,placa:v.placa,ticket:v.ticket,fornecedor:v.fornecedor,tipo_mp:v.tipoMP,peso_bruto:parseFloat(v.pesoBruto)||0,umidade:parseFloat(v.umidade)||0,nome:v.nome}).select().single();
-    if(error)throw error;return data.id;
-  },
-  async delViagem(id){const{error}=await sb.from('viagens').delete().eq('id',id);if(error)throw error;},
-
-  async upsertLev(cicloId,patio,leira,campos){
-    const existing=CD&&CD.levantamento&&CD.levantamento[leiraKey(patio,leira)];
-    if(existing&&existing._id){
-      await sb.from('levantamento').update({...DB._levMap(campos),updated_at:new Date().toISOString()}).eq('id',existing._id);
-    }else{
-      await sb.from('levantamento').insert({ciclo_id:cicloId,patio,leira,...DB._levMap(campos)});
-    }
-  },
-  _levMap(c){return{data_inicio:c.dataInicio||null,supervisor:c.supervisor||null,obs:c.obs||null};},
-
-  async addMon(cicloId,m){
-    const{data,error}=await sb.from('monitoramento').insert({ciclo_id:cicloId,patio:m.patio,leira:m.leira,data:m.data,p1:parseFloat(m.p1)||null,p2:parseFloat(m.p2)||null,p3:parseFloat(m.p3)||null,p4:parseFloat(m.p4)||null,ph:parseFloat(m.ph)||null,umidade:parseFloat(m.umidade)||null,aditivacao:m.aditivacao||null}).select().single();
-    if(error)throw error;return data.id;
-  },
-  async delMon(id){await sb.from('monitoramento').delete().eq('id',id);},
-
-  async addGas(cicloId,g){
-    const{data,error}=await sb.from('gases').insert({ciclo_id:cicloId,patio:g.patio,leira:g.leira,data:g.data,co2a:parseFloat(g.co2a)||null,co2b:parseFloat(g.co2b)||null,co2c:parseFloat(g.co2c)||null,o2:parseFloat(g.o2)||null,co:parseFloat(g.co)||null,ch4:parseFloat(g.ch4)||null,h2s:parseFloat(g.h2s)||null,nh3:parseFloat(g.nh3)||null,atividade:g.atividade||null,recomendacao:g.recomendacao||null,dias_produto:parseInt(g.diasProduto)||null}).select().single();
-    if(error)throw error;return data.id;
-  },
-  async delGas(id){await sb.from('gases').delete().eq('id',id);},
-
-  async addRev(cicloId,patio,leira,data,operador){
-    const{data:d,error}=await sb.from('revolvimento').insert({ciclo_id:cicloId,patio,leira,data,operador}).select().single();
-    if(error)throw error;return d.id;
-  },
-  async delRev(id){await sb.from('revolvimento').delete().eq('id',id);},
-
-  async upsertBio(cicloId,patio,leira,bioKey,campos){
-    const existing=CD&&CD.bioinsumos&&CD.bioinsumos[leiraKey(patio,leira)]&&CD.bioinsumos[leiraKey(patio,leira)][bioKey];
-    if(existing&&existing._id){
-      await sb.from('bioinsumos').update({data:campos.data||null,forma:campos.forma||null,obs:campos.obs||null,updated_at:new Date().toISOString()}).eq('id',existing._id);
-    }else{
-      await sb.from('bioinsumos').insert({ciclo_id:cicloId,patio,leira,bio_key:bioKey,data:campos.data||null,forma:campos.forma||null,obs:campos.obs||null});
-    }
-  },
-
-  async upsertApl(cicloId,patio,leira,campos){
-    const existing=CD&&CD.aplinsumos&&CD.aplinsumos[leiraKey(patio,leira)];
-    const row={ciclo_id:cicloId,patio,leira,data:campos.data||null,cama_frango:parseFloat(campos.camaFrango)||0,fosfato_natural:parseFloat(campos.fosfatoNatural)||0,ureia:parseFloat(campos.ureia)||0,kcl:parseFloat(campos.kcl)||0,map:parseFloat(campos.map)||0,outros_insumos:parseFloat(campos.outrosInsumos)||0,responsavel:campos.responsavel||null,obs:campos.obs||null,updated_at:new Date().toISOString()};
-    if(existing&&existing._id){await sb.from('aplinsumos').update(row).eq('id',existing._id);}
-    else{await sb.from('aplinsumos').insert(row);}
-  },
-
-  async upsertPainel(cicloId,patio,leira,campos){
-    const existing=CD&&CD.painel&&CD.painel[leiraKey(patio,leira)];
-    const et=campos.etapas||{};
-    const row={ciclo_id:cicloId,patio,leira,etapa_levantamento:!!et.levantamento,etapa_enriquecimento:!!et.enriquecimento,etapa_insumos:!!et.insumos,etapa_monitoramento:!!et.monitoramento,etapa_gases:!!et.gases,etapa_revolvimento:!!et.revolvimento,gerente:campos.gerente||null,updated_at:new Date().toISOString()};
-    if(existing&&existing._id){await sb.from('painel').update(row).eq('id',existing._id);}
-    else{await sb.from('painel').insert(row);}
-  },
-
-  async upsertColheita(cicloId,patio,leira,campos){
-    const existing=CD&&CD.colheita&&CD.colheita[leiraKey(patio,leira)];
-    const row={ciclo_id:cicloId,patio,leira,peso:parseFloat(campos.peso)||null,data:campos.data||null,responsavel:campos.responsavel||null,obs:campos.obs||null,updated_at:new Date().toISOString()};
-    if(existing&&existing._id){await sb.from('colheita').update(row).eq('id',existing._id);}
-    else{await sb.from('colheita').insert(row);}
-  },
-
-  async upsertTaxa(cicloId,chave,taxa,umidade){
-    await sb.from('taxas').upsert({ciclo_id:cicloId,chave,taxa,umidade:umidade!==null?umidade:null,updated_at:new Date().toISOString()},{onConflict:'ciclo_id,chave'});
-  },
-
-  // Combustível
-  async addEquipamento(cicloId,eq){
-    const{data,error}=await sb.from('equipamentos').insert({ciclo_id:cicloId,nome:eq.nome,tipo:eq.tipo,placa:eq.placa,obs:eq.obs}).select().single();
-    if(error)throw error;return data.id;
-  },
-  async updEquipamento(id,eq){await sb.from('equipamentos').update({nome:eq.nome,tipo:eq.tipo,placa:eq.placa,obs:eq.obs}).eq('id',id);},
-  async delEquipamento(id){await sb.from('equipamentos').delete().eq('id',id);},
-  async addCombEntrada(cicloId,e){
-    const{data,error}=await sb.from('comb_entradas').insert({ciclo_id:cicloId,data:e.data,litros:parseFloat(e.litros)||0,fornecedor:e.fornecedor,nota:e.nota,obs:e.obs}).select().single();
-    if(error)throw error;return data.id;
-  },
-  async delCombEntrada(id){await sb.from('comb_entradas').delete().eq('id',id);},
-  async addCombSaida(cicloId,s){
-    const{data,error}=await sb.from('comb_saidas').insert({ciclo_id:cicloId,equipamento_id:s.eqId,data:s.data,hora:s.hora||null,litros:parseFloat(s.litros)||0,horimetro:parseFloat(s.horimetro)||null,operador:s.operador,obs:s.obs}).select().single();
-    if(error)throw error;return data.id;
-  },
-  async delCombSaida(id){await sb.from('comb_saidas').delete().eq('id',id);},
-
-  /* ── REALTIME SUBSCRIPTION ── */
-  subscriptions:[],
-  subscribeToChanges(cicloId, callback){
-    // Unsubscribe previous
-    this.subscriptions.forEach(s=>sb.removeChannel(s));
-    this.subscriptions=[];
-    const tables=['viagens','levantamento','monitoramento','gases','revolvimento',
-      'bioinsumos','aplinsumos','painel','colheita','taxas','equipamentos','comb_entradas','comb_saidas'];
-    tables.forEach(table=>{
-      const channel=sb.channel('realtime:'+table)
-        .on('postgres_changes',{event:'*',schema:'public',table,filter:`ciclo_id=eq.${cicloId}`},
-          payload=>{console.log('RT change:',table,payload.eventType);callback(table,payload);}
-        ).subscribe();
-      this.subscriptions.push(channel);
-    });
-    console.log('Realtime subscribed for ciclo',cicloId);
-  },
-};
-
-// ═══════════════════════════════════════════════════════════════
-//  saveState — agora persiste no Supabase
-// ═══════════════════════════════════════════════════════════════
-// (será sobrescrito com funções específicas por módulo)
-function saveState(){
-  // Legacy: atualiza last-saved label
-  _updateLastSavedLabel();
-}
-function saveCiclo(){ _updateLastSavedLabel(); }
-function saveMeta(){ localStorage.setItem('organopara_meta_v3', JSON.stringify({currentUser:META.currentUser,cicloAtivo:META.cicloAtivo,filtro:META.filtro})); }
-function loadMeta(){
-  try{const r=localStorage.getItem('organopara_meta_v3');if(r){const p=JSON.parse(r);META.currentUser=p.currentUser||null;META.cicloAtivo=p.cicloAtivo||null;META.filtro=p.filtro||{patio:'Matriz - Concórdia',leira:'1-A'};}}catch(e){}
-}
-function _updateLastSavedLabel(){
-  const el=document.getElementById('lastSavedLabel');
-  if(el){const now=new Date();el.textContent='Salvo: '+now.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});}
-}
-
-
-const PATIOS = ["Matriz - Concórdia","Filial - Acará","Filial - Moju","Filial - Tailândia"];
-const LEIRAS = [];
-for(let n=1;n<=50;n++){LEIRAS.push(n+"-A");LEIRAS.push(n+"-B");}
-const TIPOS_MP = ["Cacho de dendê","Fibra","Cinza","Misto","Outro"];
-const ETAPAS = [
-  {key:"levantamento",label:"1. Levantamento"},{key:"enriquecimento",label:"2. Enriquecimento"},
-  {key:"insumos",label:"3. Aplic. Insumos"},{key:"monitoramento",label:"4. Monitoramento"},
-  {key:"gases",label:"5. Gases"},{key:"revolvimento",label:"6. Revolvimento"},
-];
-const PRAZO_DIAS = 65;
-const ATIVIDADE_BIO = ["Muito baixa","Baixa","Média","Alta","Muito alta"];
-const UMIDADE_AMBIENTE = ["Muito instável","Instável","Pouco estável","Estável","Muito estável"];
-const RECOMENDACOES = ["Nenhuma","Revolver","Molhar","Revolver e Molhar"];
-const FORMAS_APLICACAO = ["Chorumeiro","Caminhão tanque","Fertirrigação"];
-const BIOINSUMOS_DEF = [
-  {key:"bioRaiz",nome:"Bio RAIZ",periodo:"Dia 0–5"},
-  {key:"bioSolub",nome:"Bio Solubilize",periodo:"Dia 10–15"},
-  {key:"bioRelease",nome:"Bio Release",periodo:"Dia 25–30"},
-  {key:"bioAZ",nome:"Bio AZ",periodo:"Dia 40–45"},
-];
-const TAXA_ORDER = ["materiaisOrganicos","umidadeSaida","camaFrango","fosfatoNatural","ureia","kcl","map","outrosInsumos","bioRaiz","bioSolub","bioRelease","bioAZ","bokashi","trikoSoil"];
-const TAXA_LABELS = {materiaisOrganicos:"Materiais Orgânicos",umidadeSaida:"Umidade Saída (produto)",camaFrango:"Cama de Frango",fosfatoNatural:"Fosfato Natural",ureia:"Ureia",kcl:"KCl",map:"MAP",outrosInsumos:"Outros Insumos",bioRaiz:"Bio RAIZ",bioSolub:"Bio Solubilize",bioRelease:"Bio Release",bioAZ:"Bio AZ",bokashi:"Bokashi",trikoSoil:"Triko Soil"};
-const DOSE_TON = new Set(["bioRaiz","bioSolub","bioRelease","bioAZ","bokashi","trikoSoil"]);
-const COM_UMIDADE = new Set(["camaFrango","fosfatoNatural","ureia","kcl","map","outrosInsumos","bokashi","trikoSoil"]);
-const TAXAS_DEFAULT = {
-  materiaisOrganicos:{taxa:0.80,unidade:"% sobre peso líquido total",umidade:null,obs:"Define o PESO BASE"},
-  umidadeSaida:{taxa:0.25,unidade:"% umidade do produto na saída",umidade:null,obs:"Peso estimado = Peso Base ÷ (1 − Umidade Saída)"},
-  camaFrango:{taxa:0.15,unidade:"% sobre peso base",umidade:0.20,obs:""},
-  fosfatoNatural:{taxa:0.05,unidade:"% sobre peso base",umidade:0.00,obs:""},
-  ureia:{taxa:0.00,unidade:"% sobre peso base",umidade:0.00,obs:""},
-  kcl:{taxa:0.00,unidade:"% sobre peso base",umidade:0.00,obs:""},
-  map:{taxa:0.00,unidade:"% sobre peso base",umidade:0.00,obs:""},
-  outrosInsumos:{taxa:0.00,unidade:"% sobre peso base",umidade:0.00,obs:""},
-  bioRaiz:{taxa:1.00,unidade:"L por tonelada",umidade:null,obs:""},
-  bioSolub:{taxa:0.50,unidade:"L por tonelada",umidade:null,obs:""},
-  bioRelease:{taxa:0.20,unidade:"L por tonelada",umidade:null,obs:""},
-  bioAZ:{taxa:0.15,unidade:"L por tonelada",umidade:null,obs:""},
-  bokashi:{taxa:0.00,unidade:"kg por tonelada",umidade:0.00,obs:""},
-  trikoSoil:{taxa:2.00,unidade:"kg por tonelada",umidade:0.00,obs:""},
-};
-
-
-const ROLE_DEFS = {
-  master:  {label:"Usuário Master",   pages:["ciclos","usuarios","ficha","viagens","levantamento","enriquecimento","aplinsumos","bioinsumos","monitoramento","revolvimento","gases","colheita","taxas","relatorio","painel","combustivel"]},
-  user01:  {label:"Usuário 01",       pages:["viagens","monitoramento"]},
-  user02:  {label:"Usuário 02",       pages:["enriquecimento","aplinsumos"]},
-  user03:  {label:"Usuário 03",       pages:["bioinsumos"]},
-  user04:  {label:"Usuário 04",       pages:["revolvimento"]},
-  user05:  {label:"Usuário 05",       pages:["levantamento","relatorio","ficha"]},
-};
-
-const Auth = {
-  async login(){
-    const user=document.getElementById("loginUser").value.trim();
-    const senha=document.getElementById("loginPass").value;
-    if(!user||!senha){document.getElementById("loginErr").textContent="Preencha usuário e senha.";return;}
-    document.getElementById("loginErr").textContent="Verificando...";
-    try{
-      // Test connection first
-      const {data:testData, error:testErr} = await sb.from('usuarios').select('count').limit(1);
-      if(testErr){
-        console.error('Supabase error:', testErr);
-        document.getElementById("loginErr").textContent="Erro de conexão: " + (testErr.message||testErr.code||JSON.stringify(testErr));
-        return;
-      }
-      const found = await DB.loginUsuario(user, senha);
-      if(!found){document.getElementById("loginErr").textContent="Usuário ou senha incorretos. Verifique se o SQL foi executado no Supabase.";return;}
-      META.currentUser=found;
-      saveMeta();
-      document.getElementById("loginErr").textContent="";
-      document.getElementById("loginScreen").style.display="none";
-      document.getElementById("appShell").style.display="block";
-      await App.init();
-    }catch(e){
-      document.getElementById("loginErr").textContent="Erro de conexão. Verifique a internet.";
-      console.error(e);
-    }
-  },
-  logout(){
-    META.currentUser=null;saveMeta();
-    document.getElementById("appShell").style.display="none";
-    document.getElementById("loginScreen").style.display="flex";
-    document.getElementById("loginUser").value="";
-    document.getElementById("loginPass").value="";
-  },
-  canAccess(p){const u=META.currentUser;if(!u)return false;const pages=u.customPages||(ROLE_DEFS[u.role]||{}).pages||[];return pages.includes(p);},
-  defaultPage(){const u=META.currentUser;if(!u)return"viagens";const pages=u.customPages||(ROLE_DEFS[u.role]||{}).pages||[];return pages.length?pages[0]:"viagens";},
-};
-
-function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
-function leiraKey(p,l){return p+"|"+l;}
-function todayISO(){return new Date().toISOString().slice(0,10);}
+// Helpers
+function fmtDate(iso){if(!iso)return"—";const[y,m,d]=iso.split("-");return d&&m&&y?`${d}/${m}/${y}`:iso;}
 function addDays(iso,n){const d=new Date(iso);d.setDate(d.getDate()+n);return d.toISOString().slice(0,10);}
+function todayISO(){return new Date().toISOString().slice(0,10);}
+function fmtNum(v,dec=1){if(v===null||v===undefined||isNaN(v))return"—";return v.toLocaleString("pt-BR",{minimumFractionDigits:dec,maximumFractionDigits:dec});}
+function fmtPct(v,dec=0){if(v===null||v===undefined||isNaN(v))return"—";return(v*100).toLocaleString("pt-BR",{minimumFractionDigits:dec,maximumFractionDigits:dec})+"%";}
+function statusBadge(s){const m={"Aguardando":"bc","Em processo":"bv","Atenção":"ba","Crítico":"br","Pronto p/ colheita":"baz","Colhido":"bm"};return`<span class="badge ${m[s]||"bc"}">${s}</span>`;}
+function prazoBadge(dr){if(dr===null)return`<span class="badge bc">—</span>`;const c=dr<=5?"br":dr<=10?"ba":"bv";return`<span class="badge ${c}">${dr}d</span>`;}
+function stageBar(p,l){
+  const et=((STATE.painel[leiraKey(p,l)]||{}).etapas)||{};
+  const segs=ETAPAS.map((e,i)=>{const done=!!et[e.key];const prev=i===0||!!et[ETAPAS[i-1].key];return`<div class="stage-seg ${done?"done":prev?"active":""}" title="${e.label}"></div>`;}).join("");
+  const cnt=Calc.etapasConcluidas(p,l);
+  return`<div class="stage-track">${segs}</div><div class="stage-labels"><span>${ETAPAS[0].label}</span><span style="font-weight:700;color:var(--laranja)">${cnt.count}/6 etapas</span><span>${ETAPAS[5].label}</span></div>`;
+}
 
-const Ciclos = {
-  async criar(nome, descricao, dataInicio){
-    try{
-      const ciclo = await DB.criarCiclo(nome, descricao, dataInicio);
-      await this.switchTo(ciclo.id, ciclo);
-      App.toast("Ciclo '"+nome+"' criado e ativado!");
-      return ciclo;
-    }catch(e){App.toast("Erro ao criar ciclo: "+e.message,"err");}
-  },
-
-  async switchTo(id, cicloObj){
-    App.showLoading("Carregando ciclo...");
-    try{
-      const dados = await DB.carregarCiclo(id);
-      const ciclo = cicloObj || (await sb.from('ciclos').select('*').eq('id',id).single()).data;
-      CD = { id, nome: ciclo.nome, ...dados };
-      META.cicloAtivo = id;
-      saveMeta();
-      // Subscribe to realtime changes
-      DB.subscribeToChanges(id, async (table, payload) => {
-        // On any change, reload that specific data
-        await Ciclos._reloadTable(table);
-        App.refresh();
-        App.toast("🔄 Dados atualizados em tempo real","info");
-      });
-      this.updateSidebar();
-      document.getElementById("cicloBadge").textContent = CD.nome;
-    }catch(e){
-      App.toast("Erro ao carregar ciclo: "+e.message,"err");
-      console.error(e);
-    }finally{
-      App.hideLoading();
-    }
-  },
-
-  async _reloadTable(table){
-    if(!CD||!META.cicloAtivo)return;
-    const id=META.cicloAtivo;
-    try{
-      if(table==='viagens'){const{data}=await sb.from('viagens').select('*').eq('ciclo_id',id);CD.viagens=(data||[]).map(v=>({id:v.id,patio:v.patio,leira:v.leira,data:v.data,hora:v.hora,placa:v.placa,ticket:v.ticket,fornecedor:v.fornecedor,tipoMP:v.tipo_mp,pesoBruto:v.peso_bruto,umidade:v.umidade,nome:v.nome}));}
-      else if(table==='monitoramento'){const{data}=await sb.from('monitoramento').select('*').eq('ciclo_id',id);CD.monitoramento=(data||[]).map(m=>({id:m.id,patio:m.patio,leira:m.leira,data:m.data,p1:m.p1,p2:m.p2,p3:m.p3,p4:m.p4,ph:m.ph,umidade:m.umidade,aditivacao:m.aditivacao}));}
-      else if(table==='gases'){const{data}=await sb.from('gases').select('*').eq('ciclo_id',id);CD.gases=(data||[]).map(g=>({id:g.id,patio:g.patio,leira:g.leira,data:g.data,co2a:g.co2a,co2b:g.co2b,co2c:g.co2c,o2:g.o2,co:g.co,ch4:g.ch4,h2s:g.h2s,nh3:g.nh3,atividade:g.atividade,recomendacao:g.recomendacao,diasProduto:g.dias_produto}));}
-    }catch(e){console.error('_reloadTable',table,e);}
-  },
-
-  async updateSidebar(){
-    try{
-      const ciclos = await DB.listCiclos();
-      const sel = document.getElementById("sidebarCicloSel");
-      if(!sel)return;
-      sel.innerHTML = ciclos.map(c=>
-        `<option value="${c.id}" ${META.cicloAtivo===c.id?"selected":""}>${c.nome}${c.status==="encerrado"?" ✓":c.status==="arquivado"?" 📦":""}</option>`
-      ).join("") || `<option value="">— nenhum ciclo —</option>`;
-    }catch(e){console.error(e);}
-  },
-
-  async encerrar(id){
-    const{data:c}=await sb.from('ciclos').select('nome').eq('id',id).single();
-    if(!confirm(`Encerrar o ciclo "${c.nome}"?`))return;
-    await DB.atualizarCiclo(id,{status:'encerrado',data_fim:todayISO()});
-    App.toast("Ciclo encerrado.");App.navigate("ciclos");
-  },
-
-  async arquivar(id){
-    const{data:c}=await sb.from('ciclos').select('nome').eq('id',id).single();
-    if(!confirm(`Arquivar "${c.nome}"?`))return;
-    await DB.atualizarCiclo(id,{status:'arquivado'});
-    App.toast("Arquivado.");App.navigate("ciclos");
-  },
-
-  async excluir(id){
-    const{data:c}=await sb.from('ciclos').select('nome').eq('id',id).single();
-    if(!confirm(`EXCLUIR permanentemente "${c.nome}"?\nTodos os dados serão perdidos.`))return;
-    await DB.excluirCiclo(id);
-    if(META.cicloAtivo===id){META.cicloAtivo=null;CD=null;saveMeta();}
-    App.toast("Ciclo excluído.");App.navigate("ciclos");
-  },
-
-  exportCicloAtual(){
-    if(!CD){App.toast("Nenhum ciclo ativo","err");return;}
-    const blob=new Blob([JSON.stringify({meta_export:true,ciclo:CD},null,2)],{type:"application/json"});
-    const u=URL.createObjectURL(blob);const a=document.createElement("a");
-    a.href=u;a.download="backup_"+CD.nome.replace(/\s/g,"_")+"_"+todayISO()+".json";
-    a.click();URL.revokeObjectURL(u);App.toast("Backup exportado!");
-  },
-
-  importarBackup(){
-    const inp=document.createElement("input");inp.type="file";inp.accept=".json";
-    inp.onchange=async e=>{
-      const f=e.target.files[0];if(!f)return;
-      const r=new FileReader();r.onload=async ev=>{
-        try{
-          const data=JSON.parse(ev.target.result);
-          App.toast("Importação via backup não disponível no modo Supabase. Use a migração.","info");
-        }catch(err){App.toast("Arquivo inválido","err");}
-      };r.readAsText(f);
-    };inp.click();
-  },
-};
-
-
-// ── Wrappers Supabase para operações de escrita ──────────────
-const SB = {
-  async viagem(v){
-    try{
-      const id = await DB.addViagem(META.cicloAtivo, v);
-      v.id = id;
-      CD.viagens.push(v);
-      _updateLastSavedLabel();
-    }catch(e){App.toast("Erro ao salvar viagem: "+e.message,"err");throw e;}
-  },
-  async delViagem(id){
-    await DB.delViagem(id);
-    CD.viagens = CD.viagens.filter(v=>v.id!==id);
-  },
-  async levantamento(patio,leira,campo,valor){
-    const key=leiraKey(patio,leira);
-    if(!CD.levantamento[key])CD.levantamento[key]={};
-    CD.levantamento[key][campo]=valor;
-    await DB.upsertLev(META.cicloAtivo,patio,leira,CD.levantamento[key]);
-  },
-  async monitoramento(m){
-    const id=await DB.addMon(META.cicloAtivo,m);
-    m.id=id;CD.monitoramento.push(m);
-  },
-  async delMon(id){
-    await DB.delMon(id);
-    CD.monitoramento=CD.monitoramento.filter(m=>m.id!==id);
-  },
-  async gas(g){
-    const id=await DB.addGas(META.cicloAtivo,g);
-    g.id=id;CD.gases.push(g);
-  },
-  async delGas(id){
-    await DB.delGas(id);
-    CD.gases=CD.gases.filter(g=>g.id!==id);
-  },
-  async revolvimento(patio,leira,data,operador){
-    const id=await DB.addRev(META.cicloAtivo,patio,leira,data,operador);
-    const key=leiraKey(patio,leira);
-    if(!CD.revolvimento[key])CD.revolvimento[key]={entries:[]};
-    CD.revolvimento[key].entries.push({data,operador,_id:id});
-  },
-  async delRev(id){
-    await DB.delRev(id);
-    for(const key in CD.revolvimento){CD.revolvimento[key].entries=CD.revolvimento[key].entries.filter(e=>e._id!==id);}
-  },
-  async bioinsumo(patio,leira,bioKey,campo,valor){
-    const key=leiraKey(patio,leira);
-    if(!CD.bioinsumos[key])CD.bioinsumos[key]={};
-    if(!CD.bioinsumos[key][bioKey])CD.bioinsumos[key][bioKey]={};
-    CD.bioinsumos[key][bioKey][campo]=valor;
-    await DB.upsertBio(META.cicloAtivo,patio,leira,bioKey,CD.bioinsumos[key][bioKey]);
-  },
-  async aplinsumo(patio,leira,campo,valor){
-    const key=leiraKey(patio,leira);
-    if(!CD.aplinsumos[key])CD.aplinsumos[key]={};
-    CD.aplinsumos[key][campo]=valor;
-    await DB.upsertApl(META.cicloAtivo,patio,leira,CD.aplinsumos[key]);
-  },
-  async painel(patio,leira,campo,valor){
-    const key=leiraKey(patio,leira);
-    if(!CD.painel[key])CD.painel[key]={etapas:{}};
-    if(campo==='etapa'){CD.painel[key].etapas[valor]=!CD.painel[key].etapas[valor];}
-    else{CD.painel[key][campo]=valor;}
-    await DB.upsertPainel(META.cicloAtivo,patio,leira,CD.painel[key]);
-  },
-  async colheita(patio,leira,campo,valor){
-    const key=leiraKey(patio,leira);
-    if(!CD.colheita[key])CD.colheita[key]={};
-    CD.colheita[key][campo]=valor;
-    await DB.upsertColheita(META.cicloAtivo,patio,leira,CD.colheita[key]);
-  },
-  async taxa(chave,field,valor){
-    if(!CD.taxas[chave])return;
-    CD.taxas[chave][field]=parseFloat(valor)||0;
-    await DB.upsertTaxa(META.cicloAtivo,chave,CD.taxas[chave].taxa,CD.taxas[chave].umidade);
-    App.toast("Taxa salva!");
-  },
-  // Combustível
-  async addEquip(eq){const id=await DB.addEquipamento(META.cicloAtivo,eq);eq.id=id;CD.combustivel.equipamentos.push(eq);},
-  async updEquip(id,eq){await DB.updEquipamento(id,eq);const i=CD.combustivel.equipamentos.findIndex(e=>e.id===id);if(i>=0)Object.assign(CD.combustivel.equipamentos[i],eq);},
-  async delEquip(id){await DB.delEquipamento(id);CD.combustivel.equipamentos=CD.combustivel.equipamentos.filter(e=>e.id!==id);},
-  async addCombEntrada(e){const id=await DB.addCombEntrada(META.cicloAtivo,e);e.id=id;CD.combustivel.entradas.push(e);},
-  async delCombEntrada(id){await DB.delCombEntrada(id);CD.combustivel.entradas=CD.combustivel.entradas.filter(e=>e.id!==id);},
-  async addCombSaida(s){const id=await DB.addCombSaida(META.cicloAtivo,s);s.id=id;CD.combustivel.saidas.push(s);},
-  async delCombSaida(id){await DB.delCombSaida(id);CD.combustivel.saidas=CD.combustivel.saidas.filter(s=>s.id!==id);},
-  async usuario(id,username,senha,role,customPages){
-    await DB.salvarUsuario(id,username,senha,role,customPages);
-    const users=await DB.listarUsuarios();META.users=users;
-  },
-  async delUsuario(id){await DB.excluirUsuario(id);META.users=META.users.filter(u=>u.id!==id);},
-};
+// ═══════════════════════════════════════════════════════════════
+//  NAVIGATION
+// ═══════════════════════════════════════════════════════════════
+const PAGE_DEFS = [
+  {id:"ciclos",      label:"Ciclos de Produção",   icon:"ti-calendar-stats",  group:"Administração"},
+  {id:"usuarios",    label:"Cadastro de Usuários",  icon:"ti-users",           group:"Administração"},
+  {id:"ficha",       label:"Ficha da Leira",        icon:"ti-clipboard-list",  group:"Produção",filtro:true},
+  {id:"viagens",     label:"Viagens MP",            icon:"ti-truck",           group:"Produção"},
+  {id:"levantamento",label:"Levantamento",          icon:"ti-scale",           group:"Produção"},
+  {id:"enriquecimento",label:"Enriquecimento",      icon:"ti-flask",           group:"Produção",filtro:true},
+  {id:"aplinsumos",  label:"Aplic. de Insumos",     icon:"ti-box",             group:"Produção"},
+  {id:"bioinsumos",  label:"Bioinsumos",            icon:"ti-plant-2",         group:"Produção",filtro:true},
+  {id:"monitoramento",label:"Monitoramento",        icon:"ti-thermometer",     group:"Produção"},
+  {id:"revolvimento",label:"Revolvimento",          icon:"ti-refresh",         group:"Produção"},
+  {id:"gases",       label:"Gases",                icon:"ti-wind",            group:"Produção"},
+  {id:"colheita",    label:"Colheita / Saída",      icon:"ti-plant",           group:"Produção"},
+  {id:"taxas",       label:"Taxas Enriquecimento",  icon:"ti-settings",        group:"Configuração"},
+  {id:"relatorio",   label:"Relatórios / PDF",      icon:"ti-file-text",       group:"Configuração"},
+  {id:"painel",      label:"Painel Geral",          icon:"ti-layout-grid",     group:"Configuração"},
+  {id:"combustivel", label:"Combustível",          icon:"ti-droplet",     group:"Operacional"},
+];
 
 let currentPage = "";
 
@@ -1041,44 +799,19 @@ const App = {
   refresh(){this.navigate(currentPage);},
   _importHandler(e){const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);if(d.meta_export&&d.ciclo){Ciclos.importarBackup();return;}App.toast("Use 'Restaurar backup' para importar","err");}catch(err){App.toast("Erro ao ler arquivo","err");}};r.readAsText(f);e.target.value="";},
 };
-
-  showLoading(msg="Carregando..."){
-    let el=document.getElementById("loadingOverlay");
-    if(!el){el=document.createElement("div");el.id="loadingOverlay";
-      el.style.cssText="position:fixed;inset:0;background:rgba(27,67,50,.7);z-index:999;display:flex;align-items:center;justify-content:center;color:#fff;font-size:16px;font-family:var(--font-body);flex-direction:column;gap:12px";
-      el.innerHTML=`<div style="width:40px;height:40px;border:3px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin 0.8s linear infinite"></div><div id="loadingMsg">${msg}</div>`;
-      document.body.appendChild(el);
-    }else{document.getElementById("loadingMsg").textContent=msg;}
-  },
-  hideLoading(){const el=document.getElementById("loadingOverlay");if(el)el.remove();},
-  navigate(page){
-    if(!Auth.canAccess(page))page=Auth.defaultPage();
-    if(!CD&&page!=="ciclos"&&page!=="usuarios"){page="ciclos";}
-    currentPage=page;
-    document.querySelectorAll(".nav-item").forEach(el=>el.classList.toggle("active",el.dataset.page===page));
-    const def=PAGE_DEFS.find(p=>p.id===page);
-    document.getElementById("pageTitle").textContent=def?def.label:page;
-    document.getElementById("pageSub").textContent=this._sub(page);
-    this._renderFilter(page);
-    const el=document.getElementById("content");el.innerHTML="";
-    if(Pages[page])Pages[page](el);else el.innerHTML=`<div class="empty"><i class="ti ti-tool"></i><div class="title">Em desenvolvimento</div></div>`;
-  },
-  _sub(p){const m={ciclos:"Criar, selecionar e gerenciar ciclos de produção",usuarios:"Gerenciar usuários e permissões",ficha:"Histórico completo da leira selecionada",viagens:"Registro de cada viagem de matéria-prima",levantamento:"Resumo por leira — soma automática das viagens",enriquecimento:"Quantidades calculadas por leira conforme taxas",aplinsumos:"Registro do que foi efetivamente aplicado",bioinsumos:"Dosagem e aplicação dos 4 biológicos",monitoramento:"Temperatura, pH e umidade por leira",revolvimento:"Registro de revolvimentos com data e operador",gases:"Aferição de CO₂, O₂, CH₄, H₂S e NH₃",colheita:"Registro da saída e cálculo de eficiência",taxas:"Configurar taxas de enriquecimento",relatorio:"Exportar resumo em PDF",painel:"Visão consolidada de todas as leiras",combustivel:"Gestão de diesel e equipamentos"};return m[p]||"";},"
-  _renderFilter(page){const def=PAGE_DEFS.find(p=>p.id===page);const bar=document.getElementById("filterBar");bar.innerHTML=`<div class="ciclo-badge">${CD?CD.nome:"— sem ciclo —"}</div>`;if(def&&def.filtro){bar.innerHTML+=`<div class="filter-field"><label>Pátio</label><select id="filtPatio" onchange="App._onFiltro()">${PATIOS.map(p=>`<option ${META.filtro.patio===p?"selected":""}>${p}</option>`).join("")}</select></div><div class="filter-field"><label>Leira</label><select id="filtLeira" onchange="App._onFiltro()">${LEIRAS.map(l=>`<option ${META.filtro.leira===l?"selected":""}>${l}</option>`).join("")}</select></div>`;}},"
-  _onFiltro(){const p=document.getElementById("filtPatio");const l=document.getElementById("filtLeira");if(p)META.filtro.patio=p.value;if(l)META.filtro.leira=l.value;saveMeta();this.navigate(currentPage);},"
-  refresh(){this.navigate(currentPage);},"
-  toast(msg,tipo="ok"){const t=document.getElementById("toast");t.className=tipo==="err"?"toast-err":tipo==="info"?"toast-info":"";t.innerHTML=`<i class="ti ${tipo==="ok"?"ti-check":tipo==="err"?"ti-alert-triangle":"ti-info-circle"}"></i><span>${msg}</span>`;t.classList.add("show");clearTimeout(App._tt);App._tt=setTimeout(()=>t.classList.remove("show"),3000);},"
-  openModal(id){document.getElementById(id).classList.add("open");},"
-  closeModal(id){document.getElementById(id).classList.remove("open");},"
-  buildNav(){const nav=document.getElementById("sidebarNav");nav.innerHTML="";let lastGroup="";const role=META.currentUser?META.currentUser.role:"guest";PAGE_DEFS.forEach(pg=>{if(!Auth.canAccess(pg.id))return;if(pg.group!==lastGroup){const g=document.createElement("div");g.className="nav-group";g.textContent=pg.group;nav.appendChild(g);lastGroup=pg.group;}const btn=document.createElement("button");btn.className="nav-item";btn.dataset.page=pg.id;btn.innerHTML=`<i class="ti ${pg.icon}"></i>${pg.label}`;btn.onclick=()=>{this.navigate(pg.id);};nav.appendChild(btn);});},"
-  updateSidebarUser(){const u=META.currentUser;if(!u)return;document.getElementById("sidebarAvatar").textContent=u.user.slice(0,2).toUpperCase();document.getElementById("sidebarName").textContent=u.user;document.getElementById("sidebarRole").textContent=(ROLE_DEFS[u.role]||{}).label||u.role;},"
-  exportData(){if(CD)Ciclos.exportCicloAtual();else App.toast("Nenhum ciclo ativo","err");},"
-  openImport(){Ciclos.importarBackup();},"
-  
-};
-
 document.addEventListener("click",e=>{if(e.target.classList.contains("modal-bg"))e.target.classList.remove("open");});
 
+function _modal(id,title,icon,body,onSave){
+  const ex=document.getElementById(id);if(ex)ex.remove();
+  const div=document.createElement("div");div.className="modal-bg";div.id=id;
+  div.innerHTML=`<div class="modal"><div class="modal-head"><div class="title"><i class="ti ${icon}"></i>${title}</div><button class="modal-close" onclick="App.closeModal('${id}')">&#x2715;</button></div><div class="modal-body">${body}</div><div class="modal-foot"><button class="btn" onclick="App.closeModal('${id}')">Cancelar</button><button class="btn btn-primary" id="${id}-save"><i class="ti ti-check"></i> Salvar</button></div></div>`;
+  div.addEventListener("click",e=>{if(e.target===div)div.classList.remove("open");});
+  document.body.appendChild(div);document.getElementById(id+"-save").addEventListener("click",onSave);return div;
+}
+
+// ═══════════════════════════════════════════════════════════════
+//  PAGE: CICLOS
+// ═══════════════════════════════════════════════════════════════
 const Pages = {};
 
 Pages.ciclos = function(el){
@@ -1163,13 +896,24 @@ Pages._editCiclo=function(id){
   document.getElementById("ciclo-fim").value=c.dataFim||"";
   App.openModal("modal-ciclo");
 };
-Pages._salvarCiclo=async function(){
+Pages._salvarCiclo=function(){
   const id=document.getElementById("ciclo-id").value;
   const nome=document.getElementById("ciclo-nome").value.trim();
   const desc=document.getElementById("ciclo-desc").value.trim();
   const ini=document.getElementById("ciclo-inicio").value;
   const fim=document.getElementById("ciclo-fim").value;
-  if(!nome){App.toast('Informe o nome do ciclo','err');return;}try{if(id){await DB.atualizarCiclo(id,{nome,descricao:desc,data_inicio:ini||null,data_fim:fim||null});if(META.cicloAtivo===id&&CD)CD.nome=nome;App.toast('Ciclo atualizado!');}else{await Ciclos.criar(nome,desc,ini);}await Ciclos.updateSidebar();App.closeModal('modal-ciclo');App.navigate('ciclos');}catch(e){App.toast('Erro: '+e.message,'err');}
+  if(!nome){App.toast("Informe o nome do ciclo","err");return;}
+  if(id){
+    const c=loadCiclo(id);if(!c)return;
+    c.nome=nome;c.descricao=desc;c.dataInicio=ini||c.dataInicio;c.dataFim=fim||null;
+    localStorage.setItem(cicloStorageKey(id),JSON.stringify(c));
+    if(META.cicloAtivo===id)CD=c;
+    App.toast("Ciclo atualizado!");
+  } else {
+    Ciclos.criar(nome,desc,ini);
+  }
+  saveMeta();Ciclos.updateSidebar();
+  App.closeModal("modal-ciclo");App.navigate("ciclos");
 };
 Pages._exportCiclo=function(id){
   const c=loadCiclo(id);if(!c)return;
@@ -1256,7 +1000,7 @@ Pages._onRoleChange=function(){
   });
 };
 
-Pages._saveUser=async function(){
+Pages._saveUser=function(){
   const id=document.getElementById("usr-id").value;const user=document.getElementById("usr-user").value.trim();const senha=document.getElementById("usr-senha").value.trim();const role=document.getElementById("usr-role").value;
   if(!user||!senha){App.toast("Preencha usuário e senha","err");return;}
   if(senha.length<4){App.toast("Senha mínima de 4 caracteres","err");return;}
@@ -1270,7 +1014,7 @@ Pages._saveUser=async function(){
   }
   saveMeta();App.closeModal("modal-user");App.navigate("usuarios");App.toast("Usuário salvo!");
 };
-Pages._delUser=async function(id){if(!confirm('Remover?'))return;await SB.delUsuario(id);App.navigate('usuarios');App.toast('Removido.');};
+Pages._delUser=function(id){if(!confirm("Remover este usuário?"))return;META.users=META.users.filter(u=>u.id!==id);saveMeta();App.navigate("usuarios");App.toast("Removido.");};
 
 /* ── FICHA DA LEIRA ── */
 Pages.ficha = function(el){
@@ -1392,7 +1136,7 @@ Pages._toggleEtapa=function(p,l,k){
   if(!CD.painel[key])CD.painel[key]={};
   if(!CD.painel[key].etapas)CD.painel[key].etapas={};
   CD.painel[key].etapas[k]=!CD.painel[key].etapas[k];
-  // auto-saved to SupabaseApp.navigate("ficha");
+  saveCiclo();App.navigate("ficha");
 };
 
 /* ── VIAGENS ── */
@@ -1424,16 +1168,16 @@ Pages.viagens = function(el){
 };
 Pages._calcLiq=()=>{const b=parseFloat(document.getElementById("vg-pb").value)||0;const u=parseFloat(document.getElementById("vg-um").value)||0;document.getElementById("vg-lq").value=fmtNum(b*(1-u),1)+" kg";};
 Pages._openV=()=>App.openModal("modal-v");
-Pages._saveV=async function(){
+Pages._saveV=function(){
   const v={id:uid(),patio:document.getElementById("vg-p").value,leira:document.getElementById("vg-l").value,
     data:document.getElementById("vg-d").value,hora:document.getElementById("vg-h").value,
     placa:document.getElementById("vg-pl").value,ticket:document.getElementById("vg-tk").value,
     fornecedor:document.getElementById("vg-fo").value,tipoMP:document.getElementById("vg-tp").value,
     pesoBruto:document.getElementById("vg-pb").value,umidade:document.getElementById("vg-um").value};
   if(!v.data||!v.pesoBruto){App.toast("Informe data e peso","err");return;}
-  STATE.viagens.push(v);// auto-saved to SupabaseApp.closeModal("modal-v");App.navigate("viagens");App.toast("Viagem registrada!");
+  STATE.viagens.push(v);saveState();App.closeModal("modal-v");App.navigate("viagens");App.toast("Viagem registrada!");
 };
-Pages._delV=function(id){if(!confirm("Remover?"))return;STATE.viagens=STATE.viagens.filter(v=>v.id!==id);// auto-saved to SupabaseApp.navigate("viagens");};
+Pages._delV=function(id){if(!confirm("Remover?"))return;STATE.viagens=STATE.viagens.filter(v=>v.id!==id);saveState();App.navigate("viagens");};
 
 /* ── LEVANTAMENTO ── */
 Pages.levantamento = function(el){
@@ -1460,7 +1204,7 @@ Pages.levantamento = function(el){
     `<div class="empty"><i class="ti ti-scale"></i><div class="title">Sem dados</div><div>Registre viagens primeiro</div></div>`}
   </div>`;
 };
-Pages._saveLev=function(p,l,f,v){const key=leiraKey(p,l);if(!STATE.levantamento[key])STATE.levantamento[key]={};STATE.levantamento[key][f]=v;// auto-saved to Supabase};
+Pages._saveLev=function(p,l,f,v){const key=leiraKey(p,l);if(!STATE.levantamento[key])STATE.levantamento[key]={};STATE.levantamento[key][f]=v;saveState();};
 
 /* ── ENRIQUECIMENTO ── */
 Pages.enriquecimento = function(el){
@@ -1516,7 +1260,7 @@ Pages.aplinsumos = function(el){
       ${macros.map(k=>`<th>${mLabels[k]} (kg)</th>`).join("")}<th>Responsável</th></tr></thead><tbody>${rows}</tbody></table></div>
   </div>`;
 };
-Pages._saveApl=function(p,l,f,v){const key=leiraKey(p,l);if(!STATE.aplinsumos[key])STATE.aplinsumos[key]={};STATE.aplinsumos[key][f]=v;// auto-saved to Supabase};
+Pages._saveApl=function(p,l,f,v){const key=leiraKey(p,l);if(!STATE.aplinsumos[key])STATE.aplinsumos[key]={};STATE.aplinsumos[key][f]=v;saveState();};
 
 /* ── BIOINSUMOS ── */
 Pages.bioinsumos = function(el){
@@ -1544,7 +1288,7 @@ Pages.bioinsumos = function(el){
     <div class="metric m-verde"><div class="label">Início</div><div class="value" style="font-size:20px">${fmtDate(lev.dataInicio)}</div><div class="sub">${lev.dataInicio?Calc.diasDesdeHoje(lev.dataInicio)+" dias":"Não iniciada"}</div></div>
   </div><div class="grid g2">${cards}</div>`;
 };
-Pages._saveBio=function(p,l,bk,f,v){const key=leiraKey(p,l);if(!STATE.bioinsumos[key])STATE.bioinsumos[key]={};if(!STATE.bioinsumos[key][bk])STATE.bioinsumos[key][bk]={};STATE.bioinsumos[key][bk][f]=v;// auto-saved to SupabaseApp.toast("Salvo!");};
+Pages._saveBio=function(p,l,bk,f,v){const key=leiraKey(p,l);if(!STATE.bioinsumos[key])STATE.bioinsumos[key]={};if(!STATE.bioinsumos[key][bk])STATE.bioinsumos[key][bk]={};STATE.bioinsumos[key][bk][f]=v;saveState();App.toast("Salvo!");};
 
 /* ── MONITORAMENTO ── */
 Pages.monitoramento = function(el){
@@ -1583,15 +1327,15 @@ Pages.monitoramento = function(el){
 };
 Pages._calcMed=function(){const pts=[1,2,3,4].map(i=>parseFloat(document.getElementById("mn-p"+i).value)).filter(v=>!isNaN(v));if(!pts.length){document.getElementById("mn-med").value="";document.getElementById("mn-alerta").innerHTML="";return;}const m=pts.reduce((a,b)=>a+b,0)/pts.length;document.getElementById("mn-med").value=fmtNum(m,1)+" °C";const al=Calc.alertaTemp(m);document.getElementById("mn-alerta").innerHTML=al?`<span class="badge ${al.cls}">${al.txt}</span>`:"";};
 Pages._openMon=()=>App.openModal("modal-mon");
-Pages._saveMon=async function(){
+Pages._saveMon=function(){
   const m={id:uid(),patio:document.getElementById("mn-p").value,leira:document.getElementById("mn-l").value,
     data:document.getElementById("mn-d").value,p1:document.getElementById("mn-p1").value,p2:document.getElementById("mn-p2").value,
     p3:document.getElementById("mn-p3").value,p4:document.getElementById("mn-p4").value,
     ph:document.getElementById("mn-ph").value,umidade:document.getElementById("mn-um").value,aditivacao:document.getElementById("mn-ad").value};
   if(!m.data){App.toast("Informe a data","err");return;}
-  STATE.monitoramento.push(m);// auto-saved to SupabaseApp.closeModal("modal-mon");App.navigate("monitoramento");App.toast("Medição registrada!");
+  STATE.monitoramento.push(m);saveState();App.closeModal("modal-mon");App.navigate("monitoramento");App.toast("Medição registrada!");
 };
-Pages._delMon=function(id){if(!confirm("Remover?"))return;STATE.monitoramento=STATE.monitoramento.filter(m=>m.id!==id);// auto-saved to SupabaseApp.navigate("monitoramento");};
+Pages._delMon=function(id){if(!confirm("Remover?"))return;STATE.monitoramento=STATE.monitoramento.filter(m=>m.id!==id);saveState();App.navigate("monitoramento");};
 
 /* ── REVOLVIMENTO ── */
 Pages.revolvimento = function(el){
@@ -1614,7 +1358,7 @@ Pages.revolvimento = function(el){
 };
 Pages._revCtx=null;
 Pages._openRev=function(p,l){Pages._revCtx={p,l};document.getElementById("rev-info").textContent=`Leira: ${l} — ${p}`;App.openModal("modal-rev");};
-Pages._saveRev=async function(){if(!Pages._revCtx)return;const{p,l}=Pages._revCtx;const d=document.getElementById("rv-d").value;if(!d){App.toast("Informe a data","err");return;}const key=leiraKey(p,l);if(!STATE.revolvimento[key])STATE.revolvimento[key]={entries:[]};STATE.revolvimento[key].entries.push({data:d,operador:document.getElementById("rv-op").value});// auto-saved to SupabaseApp.closeModal("modal-rev");App.navigate("revolvimento");App.toast("Revolvimento registrado!");};
+Pages._saveRev=function(){if(!Pages._revCtx)return;const{p,l}=Pages._revCtx;const d=document.getElementById("rv-d").value;if(!d){App.toast("Informe a data","err");return;}const key=leiraKey(p,l);if(!STATE.revolvimento[key])STATE.revolvimento[key]={entries:[]};STATE.revolvimento[key].entries.push({data:d,operador:document.getElementById("rv-op").value});saveState();App.closeModal("modal-rev");App.navigate("revolvimento");App.toast("Revolvimento registrado!");};
 
 /* ── GASES ── */
 Pages.gases = function(el){
@@ -1649,7 +1393,7 @@ Pages.gases = function(el){
   ()=>Pages._saveGas());
 };
 Pages._openGas=()=>App.openModal("modal-gas");
-Pages._saveGas=async function(){
+Pages._saveGas=function(){
   const g={id:uid(),patio:document.getElementById("gs-p").value,leira:document.getElementById("gs-l").value,
     data:document.getElementById("gs-d").value,co2a:document.getElementById("gs-c1").value,
     co2b:document.getElementById("gs-c2").value,co2c:document.getElementById("gs-c3").value,
@@ -1657,9 +1401,9 @@ Pages._saveGas=async function(){
     h2s:document.getElementById("gs-h2s").value,nh3:document.getElementById("gs-nh3").value,
     atividade:document.getElementById("gs-at").value,recomendacao:document.getElementById("gs-rec").value,diasProduto:document.getElementById("gs-dias").value};
   if(!g.data){App.toast("Informe a data","err");return;}
-  STATE.gases.push(g);// auto-saved to SupabaseApp.closeModal("modal-gas");App.navigate("gases");App.toast("Aferição registrada!");
+  STATE.gases.push(g);saveState();App.closeModal("modal-gas");App.navigate("gases");App.toast("Aferição registrada!");
 };
-Pages._delGas=function(id){if(!confirm("Remover?"))return;STATE.gases=STATE.gases.filter(g=>g.id!==id);// auto-saved to SupabaseApp.navigate("gases");};
+Pages._delGas=function(id){if(!confirm("Remover?"))return;STATE.gases=STATE.gases.filter(g=>g.id!==id);saveState();App.navigate("gases");};
 
 /* ── COLHEITA / SAÍDA ── */
 Pages.colheita = function(el){
@@ -1722,7 +1466,7 @@ Pages._saveColh=function(p,l,f,v){
   const key=leiraKey(p,l);
   if(!STATE.colheita[key])STATE.colheita[key]={};
   STATE.colheita[key][f]=v;
-  // auto-saved to Supabase
+  saveCiclo();
   // Refresh just the row metrics without full re-render
   App.navigate("colheita");
 };
@@ -1855,8 +1599,8 @@ Pages._onUmidSaidaChange=function(val){
   // Save to STATE
   Pages._saveTaxa("umidadeSaida","taxa",dec);
 };
-Pages._saveTaxa=function(k,f,v){STATE.taxas[k][f]=parseFloat(v)||0;// auto-saved to SupabaseApp.toast("Taxa salva!");};
-Pages._resetTaxas=function(){if(!confirm("Restaurar padrões?"))return;STATE.taxas=JSON.parse(JSON.stringify(TAXAS_DEFAULT));// auto-saved to SupabaseApp.navigate("taxas");App.toast("Taxas restauradas!");};
+Pages._saveTaxa=function(k,f,v){STATE.taxas[k][f]=parseFloat(v)||0;saveState();App.toast("Taxa salva!");};
+Pages._resetTaxas=function(){if(!confirm("Restaurar padrões?"))return;STATE.taxas=JSON.parse(JSON.stringify(TAXAS_DEFAULT));saveState();App.navigate("taxas");App.toast("Taxas restauradas!");};
 
 /* ── RELATÓRIO / PDF ── */
 Pages.relatorio = function(el){
@@ -2447,39 +2191,39 @@ Pages.combustivel = function(el){
 // Equipamentos CRUD
 Pages._newEq=function(){document.getElementById("eq-id").value="";["eq-nome","eq-placa","eq-obs"].forEach(id=>document.getElementById(id).value="");document.getElementById("eq-tipo").value="";App.openModal("modal-eq");};
 Pages._editEq=function(id){const eq=CD.combustivel.equipamentos.find(e=>e.id===id);if(!eq)return;document.getElementById("eq-id").value=eq.id;document.getElementById("eq-nome").value=eq.nome||"";document.getElementById("eq-tipo").value=eq.tipo||"";document.getElementById("eq-placa").value=eq.placa||"";document.getElementById("eq-obs").value=eq.obs||"";App.openModal("modal-eq");};
-Pages._saveEq=async function(){
+Pages._saveEq=function(){
   const id=document.getElementById("eq-id").value;
   const nome=document.getElementById("eq-nome").value.trim();
   if(!nome){App.toast("Informe o nome do equipamento","err");return;}
   const data={nome,tipo:document.getElementById("eq-tipo").value,placa:document.getElementById("eq-placa").value,obs:document.getElementById("eq-obs").value};
   if(id){const eq=CD.combustivel.equipamentos.find(e=>e.id===id);if(eq)Object.assign(eq,data);}
   else{CD.combustivel.equipamentos.push({id:uid(),...data});}
-  // auto-saved to SupabaseApp.closeModal("modal-eq");App.navigate("combustivel");App.toast("Equipamento salvo!");
+  saveCiclo();App.closeModal("modal-eq");App.navigate("combustivel");App.toast("Equipamento salvo!");
 };
-Pages._delEq=function(id){if(!confirm("Remover equipamento? As saídas relacionadas perderão a referência."))return;CD.combustivel.equipamentos=CD.combustivel.equipamentos.filter(e=>e.id!==id);// auto-saved to SupabaseApp.navigate("combustivel");App.toast("Removido.");};
+Pages._delEq=function(id){if(!confirm("Remover equipamento? As saídas relacionadas perderão a referência."))return;CD.combustivel.equipamentos=CD.combustivel.equipamentos.filter(e=>e.id!==id);saveCiclo();App.navigate("combustivel");App.toast("Removido.");};
 
 // Entradas CRUD
 Pages._newEntrada=function(){App.openModal("modal-entrada");};
-Pages._saveEntrada=async function(){
+Pages._saveEntrada=function(){
   const litros=parseFloat(document.getElementById("ent-litros").value);
   if(!litros||litros<=0){App.toast("Informe a quantidade em litros","err");return;}
   const data=document.getElementById("ent-data").value;if(!data){App.toast("Informe a data","err");return;}
   CD.combustivel.entradas.push({id:uid(),data,litros:litros.toString(),fornecedor:document.getElementById("ent-forn").value,nota:document.getElementById("ent-nota").value,obs:document.getElementById("ent-obs").value});
-  // auto-saved to SupabaseApp.closeModal("modal-entrada");App.navigate("combustivel");App.toast("Entrada registrada! Saldo atualizado.");
+  saveCiclo();App.closeModal("modal-entrada");App.navigate("combustivel");App.toast("Entrada registrada! Saldo atualizado.");
 };
-Pages._delEntrada=function(id){if(!confirm("Remover esta entrada?"))return;CD.combustivel.entradas=CD.combustivel.entradas.filter(e=>e.id!==id);// auto-saved to SupabaseApp.navigate("combustivel");};
+Pages._delEntrada=function(id){if(!confirm("Remover esta entrada?"))return;CD.combustivel.entradas=CD.combustivel.entradas.filter(e=>e.id!==id);saveCiclo();App.navigate("combustivel");};
 
 // Saídas CRUD
 Pages._newSaida=function(){App.openModal("modal-saida");};
-Pages._saveSaida=async function(){
+Pages._saveSaida=function(){
   const litros=parseFloat(document.getElementById("sai-litros").value);
   if(!litros||litros<=0){App.toast("Informe a quantidade em litros","err");return;}
   const data=document.getElementById("sai-data").value;if(!data){App.toast("Informe a data","err");return;}
   const eqId=document.getElementById("sai-eq").value;if(!eqId){App.toast("Selecione o equipamento","err");return;}
   CD.combustivel.saidas.push({id:uid(),data,hora:document.getElementById("sai-hora").value,eqId,litros:litros.toString(),horimetro:document.getElementById("sai-hor").value,operador:document.getElementById("sai-oper").value,obs:document.getElementById("sai-obs").value});
-  // auto-saved to SupabaseApp.closeModal("modal-saida");App.navigate("combustivel");App.toast("Abastecimento registrado!");
+  saveCiclo();App.closeModal("modal-saida");App.navigate("combustivel");App.toast("Abastecimento registrado!");
 };
-Pages._delSaida=function(id){if(!confirm("Remover este registro?"))return;CD.combustivel.saidas=CD.combustivel.saidas.filter(s=>s.id!==id);// auto-saved to SupabaseApp.navigate("combustivel");};
+Pages._delSaida=function(id){if(!confirm("Remover este registro?"))return;CD.combustivel.saidas=CD.combustivel.saidas.filter(s=>s.id!==id);saveCiclo();App.navigate("combustivel");};
 
 // Print
 Pages._printCombustivel=function(){
@@ -2520,46 +2264,44 @@ Pages._printCombustivel=function(){
 // ═══════════════════════════════════════════════════════════════
 //  BOOT
 // ═══════════════════════════════════════════════════════════════
-
-
-// ── BOOT ─────────────────────────────────────────────────────
 loadMeta();
+// Warn user before closing if there's unsaved data context
 window.addEventListener("beforeunload", function(e){
-  if(CD){e.preventDefault();e.returnValue="Dados não salvos externamente. Sair?";}
+  if(CD){
+    // Data is actually auto-saved on every action, but warn just in case
+    // Only show if no recent save in last 5 minutes
+    const lastSaved=CD._lastSaved?new Date(CD._lastSaved):null;
+    const minsAgo=lastSaved?(Date.now()-lastSaved)/60000:999;
+    if(minsAgo>5){
+      e.preventDefault();
+      e.returnValue="Você tem dados não confirmados em backup externo. Recomendamos fazer um backup antes de sair.";
+    }
+  }
 });
-// Add CSS animation for spinner
-const spinStyle=document.createElement('style');
-spinStyle.textContent='@keyframes spin{to{transform:rotate(360deg)}}';
-document.head.appendChild(spinStyle);
-
+// Auto-remind backup every 30 minutes
+setInterval(()=>{
+  if(CD&&META.currentUser){
+    const lastSaved=CD._lastSaved?new Date(CD._lastSaved):null;
+    const minsAgo=lastSaved?(Date.now()-lastSaved)/60000:999;
+    if(minsAgo>30){
+      App.toast("💾 Lembrete: faça um backup do ciclo para garantir seus dados!","info");
+    }
+  }
+},1800000);
+// Load active ciclo if exists
+if(META.cicloAtivo){
+  const c=loadCiclo(META.cicloAtivo);
+  if(c)CD=c;else META.cicloAtivo=null;
+}
+// Show login
 document.getElementById("loginScreen").style.display="flex";
 document.getElementById("appShell").style.display="none";
-
-// Auto-restore session if user was logged in
+// If user was already logged in (page refresh), auto-restore
 if(META.currentUser){
   document.getElementById("loginScreen").style.display="none";
   document.getElementById("appShell").style.display="block";
-  // Re-login from Supabase to verify user still exists
-  DB.loginUsuario(META.currentUser.user, "").then(found => {
-    // Just load, don't re-verify password
-    App.init().then(() => {
-      if(META.cicloAtivo){
-        Ciclos.switchTo(META.cicloAtivo);
-      }
-    });
-  }).catch(()=>{
-    App.init().then(() => {
-      if(META.cicloAtivo) Ciclos.switchTo(META.cicloAtivo);
-    });
-  });
+  App.init();
 }
-
-// Handle enter key on login
-document.addEventListener('keydown', function(e){
-  if(e.key==='Enter'&&document.getElementById('loginScreen').style.display!=='none'){
-    Auth.login();
-  }
-});
 
 </script>
 </body>
