@@ -522,9 +522,26 @@ const Auth = {
     const senha=document.getElementById("loginPass").value;
     if(!user||!senha){document.getElementById("loginErr").textContent="Preencha usuário e senha.";return;}
     document.getElementById("loginErr").textContent="Verificando...";
-    _sb.from("usuarios").select("*")
+    _sb.from("usuarios").select("id,login,senha,perfil,ativo")
     .then(({data,error})=>{
-      if(error){document.getElementById("loginErr").textContent="Erro: "+error.message;return;}
+      if(error){
+        // Fallback: try raw fetch
+        const url="https://aceaaspekrwboslyfzol.supabase.co/rest/v1/usuarios?select=id,login,senha,perfil,ativo";
+        const key="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFjZWFhc3Bla3J3Ym9zbHlmem9sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3MTc0MTcsImV4cCI6MjA5NzI5MzQxN30.DT-d2df0q2zk_ic8drOUgwIZXPKR7PWYJ_77DsBZ4RQ";
+        fetch(url,{headers:{"apikey":key,"Authorization":"Bearer "+key}})
+          .then(r=>r.json()).then(data2=>{
+            if(!Array.isArray(data2)){document.getElementById("loginErr").textContent="Erro de conexão com banco";return;}
+            const row=data2.find(u=>u.login===user&&u.senha===senha&&u.ativo!==false);
+            if(!row){document.getElementById("loginErr").textContent="Usuário ou senha incorretos.";return;}
+            const found={id:row.id,user:row.login,senha:row.senha,role:row.perfil,customPages:null};
+            META.currentUser=found;saveMeta();
+            document.getElementById("loginErr").textContent="";
+            document.getElementById("loginScreen").style.display="none";
+            document.getElementById("appShell").style.display="block";
+            App.init();
+          }).catch(e=>document.getElementById("loginErr").textContent="Erro: "+e.message);
+        return;
+      }
       const row=data&&data.find(u=>u.login===user&&u.senha===senha&&u.ativo!==false);
       if(!row){document.getElementById("loginErr").textContent="Usuário ou senha incorretos.";return;}
       const found={id:row.id,user:row.login,senha:row.senha,role:row.perfil,customPages:null};
