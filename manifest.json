@@ -1,0 +1,14 @@
+{
+  "name": "Organo Pará — Controle de Compostagem",
+  "short_name": "Organo Pará",
+  "description": "Sistema de controle de compostagem da Organo Pará Fertilizantes",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#1b4332",
+  "theme_color": "#1b4332",
+  "orientation": "any",
+  "icons": [
+    {"src": "/icon-192.png", "sizes": "192x192", "type": "image/png"},
+    {"src": "/icon-512.png", "sizes": "512x512", "type": "image/png"}
+  ]
+}
