@@ -572,7 +572,7 @@ const Ciclos = {
       CD={id,nome:info.nome,descricao:info.descricao,status:info.status,dataInicio:info.data_inicio,...dados};
       META.cicloAtivo=id;saveMeta();
       this.updateSidebar();
-      document.getElementById("cicloBadge").textContent=CD.nome;
+      const _badge=document.getElementById("cicloBadge");if(_badge)_badge.textContent=CD.nome;
       // Realtime
       this._subscribe(id);
       App.navigate(Auth.defaultPage());
@@ -964,7 +964,7 @@ Pages._newUser=function(){
   App.openModal("modal-user");
 };
 Pages._editUser=function(id){
-  const u=META.users.find(x=>x.id===id);if(!u)return;
+  const u=META.users.find(x=>String(x.id)===String(id));if(!u)return;
   document.getElementById("usr-id").value=u.id;
   document.getElementById("usr-user").value=u.user;
   document.getElementById("usr-senha").value=u.senha;
