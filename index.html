@@ -383,7 +383,8 @@ let CD = null;    // current ciclo data
 
 // ── META: só filtro e usuário logado ficam no localStorage ──
 function loadMeta(){
-  try{const r=localStorage.getItem("organopara_meta_sb");if(r){const p=JSON.parse(r);META.currentUser=p.currentUser||null;META.cicloAtivo=p.cicloAtivo||null;META.filtro=p.filtro||{patio:"Matriz - Concórdia",leira:"1-A"};return;}}catch(e){}
+  META={currentUser:null,cicloAtivo:null,filtro:{patio:"Matriz - Concórdia",leira:"1-A"},users:[]};
+  try{const r=localStorage.getItem("organopara_meta_sb");if(r){const p=JSON.parse(r);META.currentUser=p.currentUser||null;META.cicloAtivo=p.cicloAtivo||null;META.filtro=p.filtro||{patio:"Matriz - Concórdia",leira:"1-A"};}}catch(e){}
 }
 function saveMeta(){
   try{localStorage.setItem("organopara_meta_sb",JSON.stringify({currentUser:META.currentUser,cicloAtivo:META.cicloAtivo,filtro:META.filtro}));}catch(e){}
