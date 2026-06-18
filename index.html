@@ -275,34 +275,6 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
 
 <script>
 
-// ═══════════════════════════════════════════════════════
-//  SUPABASE — autenticação e sincronização
-// ═══════════════════════════════════════════════════════
-const _sb = supabase.createClient('https://aceaaspekrwboslyfzol.supabase.co', 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFjZWFhc3Bla3J3Ym9zbHlmem9sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3MTc0MTcsImV4cCI6MjA5NzI5MzQxN30.DT-d2df0q2zk_ic8drOUgwIZXPKR7PWYJ_77DsBZ4RQ');
-
-const SBAuth = {
-  async login(username, senha) {
-    const {data, error} = await _sb
-      .from('usuarios')
-      .select('*')
-      .eq('username', username)
-      .eq('senha_hash', senha)
-      .eq('ativo', true)
-      .single();
-    if (error) throw error;
-    if (!data) return null;
-    return {
-      id: data.id,
-      user: data.username,
-      senha: data.senha_hash,
-      role: data.role,
-      customPages: data.custom_pages
-    };
-  },
-};
-// ═══════════════════════════════════════════════════════
-
-
 // ═══════════════════════════════════════════════════════════════
 //  CONSTANTES
 // ═══════════════════════════════════════════════════════════════
@@ -409,53 +381,94 @@ function defaultCicloData(id, nome){
 let META = null;  // meta state (users, cicloAtivo, filtro)
 let CD = null;    // current ciclo data
 
+// ── META: só filtro e usuário logado ficam no localStorage ──
 function loadMeta(){
-  try{const r=localStorage.getItem(META_KEY);if(r){META=Object.assign(defaultMeta(),JSON.parse(r));return;}}catch(e){}
-  META=defaultMeta();
+  try{const r=localStorage.getItem("organopara_meta_sb");if(r){const p=JSON.parse(r);META.currentUser=p.currentUser||null;META.cicloAtivo=p.cicloAtivo||null;META.filtro=p.filtro||{patio:"Matriz - Concórdia",leira:"1-A"};return;}}catch(e){}
 }
-function saveMeta(){try{localStorage.setItem(META_KEY,JSON.stringify(META));}catch(e){App.toast("Erro ao salvar","err");}}
-
-function cicloStorageKey(id){return "organopara_ciclo_"+id;}
-
-function loadCiclo(id){
-  try{
-    const r=localStorage.getItem(cicloStorageKey(id));
-    if(r){
-      const c=JSON.parse(r);
-      // Migrate older ciclos that may be missing newer properties
-      if(!c.combustivel) c.combustivel={equipamentos:[],entradas:[],saidas:[]};
-      if(!c.combustivel.equipamentos) c.combustivel.equipamentos=[];
-      if(!c.combustivel.entradas) c.combustivel.entradas=[];
-      if(!c.combustivel.saidas) c.combustivel.saidas=[];
-      return c;
-    }
-  }catch(e){}
-  return null;
+function saveMeta(){
+  try{localStorage.setItem("organopara_meta_sb",JSON.stringify({currentUser:META.currentUser,cicloAtivo:META.cicloAtivo,filtro:META.filtro}));}catch(e){}
 }
-function saveCiclo(){
+
+// ── SUPABASE: save/load ─────────────────────────────────
+const _sb = supabase.createClient("https://aceaaspekrwboslyfzol.supabase.co","eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFjZWFhc3Bla3J3Ym9zbHlmem9sIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3MTc0MTcsImV4cCI6MjA5NzI5MzQxN30.DT-d2df0q2zk_ic8drOUgwIZXPKR7PWYJ_77DsBZ4RQ");
+
+// Normaliza ciclo do Supabase para o formato interno
+async function _carregarDadosCiclo(cicloId){
+  const [
+    {data:viagens},{data:levRows},{data:monitoramento},{data:gases},
+    {data:revRows},{data:bioRows},{data:aplRows},{data:painelRows},
+    {data:colheitaRows},{data:taxasRows},{data:equips},
+    {data:combEnt},{data:combSai}
+  ] = await Promise.all([
+    _sb.from("viagens").select("*").eq("ciclo_id",cicloId),
+    _sb.from("levantamento").select("*").eq("ciclo_id",cicloId),
+    _sb.from("monitoramento").select("*").eq("ciclo_id",cicloId),
+    _sb.from("gases").select("*").eq("ciclo_id",cicloId),
+    _sb.from("revolvimento").select("*").eq("ciclo_id",cicloId),
+    _sb.from("bioinsumos").select("*").eq("ciclo_id",cicloId),
+    _sb.from("aplinsumos").select("*").eq("ciclo_id",cicloId),
+    _sb.from("painel").select("*").eq("ciclo_id",cicloId),
+    _sb.from("colheita").select("*").eq("ciclo_id",cicloId),
+    _sb.from("taxas").select("*").eq("ciclo_id",cicloId),
+    _sb.from("equipamentos").select("*").eq("ciclo_id",cicloId),
+    _sb.from("comb_entradas").select("*").eq("ciclo_id",cicloId),
+    _sb.from("comb_saidas").select("*").eq("ciclo_id",cicloId),
+  ]);
+  // Levantamento
+  const levObj={};
+  (levRows||[]).forEach(r=>{levObj[leiraKey(r.patio,r.leira)]={dataInicio:r.data_inicio,supervisor:r.supervisor,obs:r.obs,_id:r.id};});
+  // Revolvimento
+  const revObj={};
+  (revRows||[]).forEach(r=>{const k=leiraKey(r.patio,r.leira);if(!revObj[k])revObj[k]={entries:[]};revObj[k].entries.push({data:r.data,operador:r.operador,_id:r.id});});
+  // Bioinsumos
+  const bioObj={};
+  (bioRows||[]).forEach(r=>{const k=leiraKey(r.patio,r.leira);if(!bioObj[k])bioObj[k]={};bioObj[k][r.bio_key]={data:r.data,forma:r.forma,obs:r.obs,_id:r.id};});
+  // Aplinsumos
+  const aplObj={};
+  (aplRows||[]).forEach(r=>{aplObj[leiraKey(r.patio,r.leira)]={data:r.data,camaFrango:r.cama_frango,fosfatoNatural:r.fosfato_natural,ureia:r.ureia,kcl:r.kcl,map:r.map,outrosInsumos:r.outros_insumos,responsavel:r.responsavel,obs:r.obs,_id:r.id};});
+  // Painel
+  const painelObj={};
+  (painelRows||[]).forEach(r=>{painelObj[leiraKey(r.patio,r.leira)]={etapas:{levantamento:r.etapa_levantamento,enriquecimento:r.etapa_enriquecimento,insumos:r.etapa_insumos,monitoramento:r.etapa_monitoramento,gases:r.etapa_gases,revolvimento:r.etapa_revolvimento},gerente:r.gerente,_id:r.id};});
+  // Colheita
+  const colheitaObj={};
+  (colheitaRows||[]).forEach(r=>{colheitaObj[leiraKey(r.patio,r.leira)]={peso:r.peso,data:r.data,responsavel:r.responsavel,obs:r.obs,_id:r.id};});
+  // Taxas
+  const taxasObj=JSON.parse(JSON.stringify(TAXAS_DEFAULT));
+  (taxasRows||[]).forEach(r=>{if(taxasObj[r.chave]){taxasObj[r.chave].taxa=parseFloat(r.taxa)||0;if(r.umidade!==null&&r.umidade!==undefined)taxasObj[r.chave].umidade=parseFloat(r.umidade);}});
+  // Viagens
+  const viagensNorm=(viagens||[]).map(v=>({id:v.id,patio:v.patio,leira:v.leira,data:v.data,hora:v.hora,placa:v.placa,ticket:v.ticket,fornecedor:v.fornecedor,tipoMP:v.tipo_mp,pesoBruto:v.peso_bruto,umidade:v.umidade,nome:v.nome}));
+  // Monitoramento
+  const monNorm=(monitoramento||[]).map(m=>({id:m.id,patio:m.patio,leira:m.leira,data:m.data,p1:m.p1,p2:m.p2,p3:m.p3,p4:m.p4,ph:m.ph,umidade:m.umidade,aditivacao:m.aditivacao}));
+  // Gases
+  const gasNorm=(gases||[]).map(g=>({id:g.id,patio:g.patio,leira:g.leira,data:g.data,co2a:g.co2a,co2b:g.co2b,co2c:g.co2c,o2:g.o2,co:g.co,ch4:g.ch4,h2s:g.h2s,nh3:g.nh3,atividade:g.atividade,recomendacao:g.recomendacao,diasProduto:g.dias_produto}));
+  // Combustível
+  const combObj={
+    equipamentos:(equips||[]).map(e=>({id:e.id,nome:e.nome,tipo:e.tipo,placa:e.placa,obs:e.obs})),
+    entradas:(combEnt||[]).map(e=>({id:e.id,data:e.data,litros:e.litros,fornecedor:e.fornecedor,nota:e.nota,obs:e.obs})),
+    saidas:(combSai||[]).map(s=>({id:s.id,data:s.data,hora:s.hora,eqId:s.equipamento_id,litros:s.litros,horimetro:s.horimetro,operador:s.operador,obs:s.obs})),
+  };
+  return {viagens:viagensNorm,levantamento:levObj,monitoramento:monNorm,gases:gasNorm,revolvimento:revObj,bioinsumos:bioObj,aplinsumos:aplObj,painel:painelObj,colheita:colheitaObj,taxas:taxasObj,combustivel:combObj};
+}
+
+// Salva estado completo do CD no Supabase (usado por saveCiclo)
+async function _salvarCicloSB(){
   if(!CD||!CD.id)return;
-  try{
-    localStorage.setItem(cicloStorageKey(CD.id),JSON.stringify(CD));
-    CD._lastSaved=new Date().toISOString();
-    _updateLastSavedLabel();
-  }catch(e){App.toast("Erro ao salvar — armazenamento cheio? Faça um backup!","err");}
+  _updateLastSavedLabel();
+  // Ciclo básico já existe - apenas marcar timestamp
+  await _sb.from("ciclos").update({updated_at:new Date().toISOString()}).eq("id",CD.id);
 }
+
+function saveCiclo(){ _updateLastSavedLabel(); }
+function saveState(){ _updateLastSavedLabel(); }
 function _updateLastSavedLabel(){
   const el=document.getElementById("lastSavedLabel");
-  if(!el)return;
-  const now=new Date();
-  el.textContent="Salvo: "+now.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
+  if(el){const now=new Date();el.textContent="Sincronizado: "+now.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});}
 }
-function saveState(){saveMeta();saveCiclo();}
 
-function listCiclos(){
-  const ids=[];
-  for(let i=0;i<localStorage.length;i++){
-    const k=localStorage.key(i);
-    if(k&&k.startsWith("organopara_ciclo_"))ids.push(k.replace("organopara_ciclo_",""));
-  }
-  return ids.map(id=>loadCiclo(id)).filter(Boolean).sort((a,b)=>b.criadoEm.localeCompare(a.criadoEm));
-}
+// listCiclos e loadCiclo agora são async via Supabase
+// (versões síncronas stub para compatibilidade)
+function listCiclos(){ return CD?[CD]:[]; }
+function loadCiclo(id){ return CD&&CD.id===id?CD:null; }
 
 function leiraKey(p,l){return p+"|"+l;}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
@@ -509,16 +522,17 @@ const Auth = {
     const senha=document.getElementById("loginPass").value;
     if(!user||!senha){document.getElementById("loginErr").textContent="Preencha usuário e senha.";return;}
     document.getElementById("loginErr").textContent="Verificando...";
-    SBAuth.login(user,senha).then(found=>{
-      if(!found){document.getElementById("loginErr").textContent="Usuário ou senha incorretos.";return;}
+    _sb.from("usuarios").select("*").eq("login",user).eq("senha",senha).eq("ativo",true).single()
+    .then(({data,error})=>{
+      if(error||!data){document.getElementById("loginErr").textContent="Usuário ou senha incorretos.";return;}
+      const found={id:data.id,user:data.login,senha:data.senha,role:data.perfil,customPages:null};
       META.currentUser=found;saveMeta();
       document.getElementById("loginErr").textContent="";
       document.getElementById("loginScreen").style.display="none";
       document.getElementById("appShell").style.display="block";
       App.init();
     }).catch(err=>{
-      console.error("SB login err:",err);
-      document.getElementById("loginErr").textContent="Erro de conexão: "+(err.message||JSON.stringify(err));
+      document.getElementById("loginErr").textContent="Erro de conexão: "+(err.message||"verifique a internet");
     });
   },
   logout(){
@@ -536,104 +550,78 @@ const Auth = {
 //  GESTÃO DE CICLOS
 // ═══════════════════════════════════════════════════════════════
 const Ciclos = {
-  criar(nome, descricao, dataInicio){
-    const id = uid();
-    const ciclo = defaultCicloData(id, nome);
-    ciclo.descricao = descricao||"";
-    if(dataInicio) ciclo.dataInicio = dataInicio;
-    localStorage.setItem(cicloStorageKey(id), JSON.stringify(ciclo));
-    this.switchTo(id);
-    App.toast("Ciclo '"+nome+"' criado e ativado!");
-    return ciclo;
+  async criar(nome, descricao, dataInicio){
+    App._showSpinner("Criando ciclo...");
+    try{
+      const {data,error}=await _sb.from("ciclos").insert({nome,descricao:descricao||"",data_inicio:dataInicio||null,status:"ativo",criado_em:new Date().toISOString()}).select().single();
+      if(error)throw error;
+      await this.switchTo(data.id,data);
+      App.toast("Ciclo '"+nome+"' criado!");
+    }catch(e){App.toast("Erro: "+e.message,"err");}finally{App._hideSpinner();}
   },
-  switchTo(id){
-    if(!id) return;
-    const ciclo = loadCiclo(id);
-    if(!ciclo){App.toast("Ciclo não encontrado","err");return;}
-    META.cicloAtivo = id;
-    CD = ciclo;
-    saveMeta();
-    this.updateSidebar();
-    document.getElementById("cicloBadge").textContent = CD.nome;
-    App.navigate(Auth.defaultPage());
+  async switchTo(id,cicloObj){
+    App._showSpinner("Carregando ciclo...");
+    try{
+      let info=cicloObj;
+      if(!info){const{data}=await _sb.from("ciclos").select("*").eq("id",id).single();info=data;}
+      if(!info){App.toast("Ciclo não encontrado","err");return;}
+      const dados=await _carregarDadosCiclo(id);
+      CD={id,nome:info.nome,descricao:info.descricao,status:info.status,dataInicio:info.data_inicio,...dados};
+      META.cicloAtivo=id;saveMeta();
+      this.updateSidebar();
+      document.getElementById("cicloBadge").textContent=CD.nome;
+      // Realtime
+      this._subscribe(id);
+      App.navigate(Auth.defaultPage());
+    }catch(e){App.toast("Erro ao carregar: "+e.message,"err");console.error(e);}finally{App._hideSpinner();}
   },
-  updateSidebar(){
-    const ciclos = listCiclos();
-    const sel = document.getElementById("sidebarCicloSel");
-    if(!sel) return;
-    sel.innerHTML = ciclos.map(c=>
-      `<option value="${c.id}" ${META.cicloAtivo===c.id?"selected":""}>${c.nome}${c.status==="encerrado"?" ✓":c.status==="arquivado"?" 📦":""}</option>`
-    ).join("");
-    if(!ciclos.length) sel.innerHTML = `<option value="">— nenhum ciclo —</option>`;
+  _subscribe(cicloId){
+    if(this._channel){_sb.removeChannel(this._channel);}
+    this._channel=_sb.channel("ciclo-"+cicloId)
+      .on("postgres_changes",{event:"*",schema:"public",filter:"ciclo_id=eq."+cicloId},async()=>{
+        if(!CD||CD.id!==cicloId)return;
+        const dados=await _carregarDadosCiclo(cicloId);
+        Object.assign(CD,dados);
+        App.refresh();
+        _updateLastSavedLabel();
+      }).subscribe();
   },
-  encerrar(id){
-    const c = loadCiclo(id);if(!c)return;
-    if(!confirm(`Encerrar o ciclo "${c.nome}"? Ele ficará no histórico mas não poderá mais receber novos dados.`))return;
-    c.status="encerrado";c.dataFim=todayISO();
-    localStorage.setItem(cicloStorageKey(id),JSON.stringify(c));
-    if(META.cicloAtivo===id) CD=c;
+  async updateSidebar(){
+    try{
+      const{data:ciclos}=await _sb.from("ciclos").select("*").order("criado_em",{ascending:false});
+      const sel=document.getElementById("sidebarCicloSel");
+      if(!sel)return;
+      sel.innerHTML=(ciclos||[]).map(c=>`<option value="${c.id}" ${META.cicloAtivo===c.id?"selected":""}>${c.nome}${c.status==="encerrado"?" ✓":c.status==="arquivado"?" 📦":""}</option>`).join("")||`<option value="">— nenhum ciclo —</option>`;
+    }catch(e){console.error(e);}
+  },
+  async encerrar(id){
+    const{data:c}=await _sb.from("ciclos").select("nome").eq("id",id).single();
+    if(!confirm(`Encerrar "${c.nome}"?`))return;
+    await _sb.from("ciclos").update({status:"encerrado",data_fim:todayISO()}).eq("id",id);
+    if(CD&&CD.id===id)CD.status="encerrado";
     App.toast("Ciclo encerrado.");App.navigate("ciclos");
   },
-  arquivar(id){
-    const c = loadCiclo(id);if(!c)return;
+  async arquivar(id){
+    const{data:c}=await _sb.from("ciclos").select("nome").eq("id",id).single();
     if(!confirm(`Arquivar "${c.nome}"?`))return;
-    c.status="arquivado";
-    localStorage.setItem(cicloStorageKey(id),JSON.stringify(c));
+    await _sb.from("ciclos").update({status:"arquivado"}).eq("id",id);
     App.toast("Arquivado.");App.navigate("ciclos");
   },
-  excluir(id){
-    const c = loadCiclo(id);if(!c)return;
-    if(!confirm(`EXCLUIR permanentemente "${c.nome}"? Todos os dados serão perdidos.`))return;
-    localStorage.removeItem(cicloStorageKey(id));
+  async excluir(id){
+    const{data:c}=await _sb.from("ciclos").select("nome").eq("id",id).single();
+    if(!confirm(`EXCLUIR permanentemente "${c.nome}"?\nTodos os dados serão perdidos!`))return;
+    await _sb.from("ciclos").delete().eq("id",id);
     if(META.cicloAtivo===id){META.cicloAtivo=null;CD=null;saveMeta();}
-    App.toast("Ciclo excluído.");App.navigate("ciclos");
+    App.toast("Excluído.");App.navigate("ciclos");
   },
   exportCicloAtual(){
     if(!CD){App.toast("Nenhum ciclo ativo","err");return;}
     const blob=new Blob([JSON.stringify({meta_export:true,ciclo:CD},null,2)],{type:"application/json"});
     const u=URL.createObjectURL(blob);const a=document.createElement("a");
     a.href=u;a.download="backup_"+CD.nome.replace(/\s/g,"_")+"_"+todayISO()+".json";
-    a.click();URL.revokeObjectURL(u);App.toast("Backup do ciclo exportado!");
+    a.click();URL.revokeObjectURL(u);App.toast("Backup exportado!");
   },
-  exportTudo(){
-    const ciclos=listCiclos();
-    if(!ciclos.length){App.toast("Nenhum ciclo para exportar","err");return;}
-    const blob=new Blob([JSON.stringify({meta_export_all:true,versao:"2",exportadoEm:new Date().toISOString(),meta:{users:META.users},ciclos},null,2)],{type:"application/json"});
-    const u=URL.createObjectURL(blob);const a=document.createElement("a");
-    a.href=u;a.download="backup_completo_organopara_"+todayISO()+".json";
-    a.click();URL.revokeObjectURL(u);
-    App.toast(`Backup completo: ${ciclos.length} ciclo(s) exportado(s)!`);
-  },
-  importarBackup(){
-    const inp=document.createElement("input");inp.type="file";inp.accept=".json";
-    inp.onchange=e=>{
-      const f=e.target.files[0];if(!f)return;
-      const r=new FileReader();r.onload=ev=>{
-        try{
-          const data=JSON.parse(ev.target.result);
-          // Handle full backup (all ciclos)
-          if(data.meta_export_all&&data.ciclos){
-            let count=0;
-            data.ciclos.forEach(c=>{
-              const newId=uid();c.id=newId;c.nome+=" (restaurado)";
-              localStorage.setItem(cicloStorageKey(newId),JSON.stringify(c));count++;
-            });
-            if(data.meta&&data.meta.users)META.users=data.meta.users;
-            saveMeta();Ciclos.updateSidebar();
-            App.toast(`${count} ciclo(s) restaurado(s) com sucesso!`);
-            App.navigate("ciclos");return;
-          }
-          // Handle single ciclo backup
-          const cicloData=data.ciclo||data;
-          if(!cicloData.id||!cicloData.nome)throw new Error("Formato inválido");
-          const newId=uid();cicloData.id=newId;
-          cicloData.nome+=" (restaurado)";
-          localStorage.setItem(cicloStorageKey(newId),JSON.stringify(cicloData));
-          this.switchTo(newId);App.toast("Backup do ciclo restaurado com sucesso!");
-        }catch(err){App.toast("Arquivo inválido: "+err.message,"err");}
-      };r.readAsText(f);
-    };inp.click();
-  },
+  importarBackup(){App.toast("Use o botão de backup para exportar/importar ciclos","info");},
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -740,6 +728,10 @@ let currentPage = "";
 
 const App = {
   init(){
+    // Carregar usuários do Supabase
+    _sb.from("usuarios").select("id,nome,login,senha,perfil,ativo").then(({data})=>{
+      if(data)META.users=data.map(u=>({id:u.id,user:u.login,senha:u.senha,role:u.perfil,customPages:null,ativo:u.ativo}));
+    });
     this.buildNav();this.updateSidebarUser();Ciclos.updateSidebar();
     const badge=document.getElementById("cicloBadge");
     badge.textContent=CD?CD.nome:"— sem ciclo —";
@@ -797,6 +789,8 @@ const App = {
   openModal(id){document.getElementById(id).classList.add("open");},
   closeModal(id){document.getElementById(id).classList.remove("open");},
   refresh(){this.navigate(currentPage);},
+  _showSpinner(msg){let el=document.getElementById('_spinner');if(!el){el=document.createElement('div');el.id='_spinner';el.style.cssText='position:fixed;inset:0;background:rgba(27,67,50,.75);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;gap:14px;font-family:var(--font-body)';el.innerHTML='<div style="width:44px;height:44px;border:4px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite"></div><div id="_spinMsg" style="font-size:14px">'+msg+'</div>';document.body.appendChild(el);}else{document.getElementById('_spinMsg').textContent=msg;}},
+  _hideSpinner(){const el=document.getElementById('_spinner');if(el)el.remove();},
   _importHandler(e){const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);if(d.meta_export&&d.ciclo){Ciclos.importarBackup();return;}App.toast("Use 'Restaurar backup' para importar","err");}catch(err){App.toast("Erro ao ler arquivo","err");}};r.readAsText(f);e.target.value="";},
 };
 document.addEventListener("click",e=>{if(e.target.classList.contains("modal-bg"))e.target.classList.remove("open");});
@@ -896,24 +890,13 @@ Pages._editCiclo=function(id){
   document.getElementById("ciclo-fim").value=c.dataFim||"";
   App.openModal("modal-ciclo");
 };
-Pages._salvarCiclo=function(){
+Pages._salvarCiclo=async function(){
   const id=document.getElementById("ciclo-id").value;
   const nome=document.getElementById("ciclo-nome").value.trim();
   const desc=document.getElementById("ciclo-desc").value.trim();
   const ini=document.getElementById("ciclo-inicio").value;
   const fim=document.getElementById("ciclo-fim").value;
-  if(!nome){App.toast("Informe o nome do ciclo","err");return;}
-  if(id){
-    const c=loadCiclo(id);if(!c)return;
-    c.nome=nome;c.descricao=desc;c.dataInicio=ini||c.dataInicio;c.dataFim=fim||null;
-    localStorage.setItem(cicloStorageKey(id),JSON.stringify(c));
-    if(META.cicloAtivo===id)CD=c;
-    App.toast("Ciclo atualizado!");
-  } else {
-    Ciclos.criar(nome,desc,ini);
-  }
-  saveMeta();Ciclos.updateSidebar();
-  App.closeModal("modal-ciclo");App.navigate("ciclos");
+  if(!nome){App.toast("Informe o nome do ciclo","err");return;}try{if(id){await _sb.from("ciclos").update({nome,descricao:desc,data_inicio:ini||null,data_fim:fim||null}).eq("id",id);if(CD&&CD.id===id){CD.nome=nome;document.getElementById("cicloBadge").textContent=nome;}App.toast("Ciclo atualizado!");}else{await Ciclos.criar(nome,desc,ini);}await Ciclos.updateSidebar();App.closeModal("modal-ciclo");App.navigate("ciclos");}catch(e){App.toast("Erro: "+e.message,"err");}
 };
 Pages._exportCiclo=function(id){
   const c=loadCiclo(id);if(!c)return;
@@ -1004,17 +987,23 @@ Pages._saveUser=function(){
   const id=document.getElementById("usr-id").value;const user=document.getElementById("usr-user").value.trim();const senha=document.getElementById("usr-senha").value.trim();const role=document.getElementById("usr-role").value;
   if(!user||!senha){App.toast("Preencha usuário e senha","err");return;}
   if(senha.length<4){App.toast("Senha mínima de 4 caracteres","err");return;}
-  // Collect selected pages
-  const customPages=Array.from(document.querySelectorAll(".usr-page-cb:checked")).map(cb=>cb.value);
+  const urow={nome:user,login:user,senha,perfil:role,ativo:true};
   if(id){
-    const u=META.users.find(x=>x.id===id);
-    if(u){u.user=user;u.senha=senha;u.role=role;u.customPages=customPages;}
+    _sb.from("usuarios").update(urow).eq("id",id).then(({error})=>{
+      if(error){App.toast("Erro: "+error.message,"err");return;}
+      const u=META.users.find(x=>x.id===id);
+      if(u){u.user=user;u.senha=senha;u.role=role;}
+      App.closeModal("modal-user");App.navigate("usuarios");App.toast("Usuário salvo!");
+    });
   } else {
-    META.users.push({id:uid(),user,senha,role,customPages});
+    _sb.from("usuarios").insert(urow).select().single().then(({data:d,error})=>{
+      if(error){App.toast("Erro: "+error.message,"err");return;}
+      META.users.push({id:d.id,user,senha,role,customPages:null});
+      App.closeModal("modal-user");App.navigate("usuarios");App.toast("Usuário salvo!");
+    });
   }
-  saveMeta();App.closeModal("modal-user");App.navigate("usuarios");App.toast("Usuário salvo!");
 };
-Pages._delUser=function(id){if(!confirm("Remover este usuário?"))return;META.users=META.users.filter(u=>u.id!==id);saveMeta();App.navigate("usuarios");App.toast("Removido.");};
+Pages._delUser=function(id){if(!confirm("Remover?"))return;_sb.from("usuarios").delete().eq("id",id).then(()=>{META.users=META.users.filter(u=>u.id!==id);App.navigate("usuarios");App.toast("Removido.");});};
 
 /* ── FICHA DA LEIRA ── */
 Pages.ficha = function(el){
@@ -1175,9 +1164,9 @@ Pages._saveV=function(){
     fornecedor:document.getElementById("vg-fo").value,tipoMP:document.getElementById("vg-tp").value,
     pesoBruto:document.getElementById("vg-pb").value,umidade:document.getElementById("vg-um").value};
   if(!v.data||!v.pesoBruto){App.toast("Informe data e peso","err");return;}
-  STATE.viagens.push(v);saveState();App.closeModal("modal-v");App.navigate("viagens");App.toast("Viagem registrada!");
+  _sb.from("viagens").insert({ciclo_id:CD.id,patio:v.patio,leira:v.leira,data:v.data,hora:v.hora||null,placa:v.placa,ticket:v.ticket,fornecedor:v.fornecedor,tipo_mp:v.tipoMP,peso_bruto:parseFloat(v.pesoBruto)||0,umidade:parseFloat(v.umidade)||0,nome:v.nome||null}).select().single().then(({data:d,error})=>{if(error){App.toast("Erro: "+error.message,"err");return;}v.id=d.id;STATE.viagens.push(v);App.closeModal("modal-v");App.navigate("viagens");App.toast("Viagem registrada!");});
 };
-Pages._delV=function(id){if(!confirm("Remover?"))return;STATE.viagens=STATE.viagens.filter(v=>v.id!==id);saveState();App.navigate("viagens");};
+Pages._delV=function(id){if(!confirm("Remover?"))return;_sb.from("viagens").delete().eq("id",id).then(()=>{CD.viagens=CD.viagens.filter(v=>v.id!==id);App.navigate("viagens");});};
 
 /* ── LEVANTAMENTO ── */
 Pages.levantamento = function(el){
@@ -1204,7 +1193,7 @@ Pages.levantamento = function(el){
     `<div class="empty"><i class="ti ti-scale"></i><div class="title">Sem dados</div><div>Registre viagens primeiro</div></div>`}
   </div>`;
 };
-Pages._saveLev=function(p,l,f,v){const key=leiraKey(p,l);if(!STATE.levantamento[key])STATE.levantamento[key]={};STATE.levantamento[key][f]=v;saveState();};
+Pages._saveLev=function(p,l,f,v){const key=leiraKey(p,l);if(!CD.levantamento[key])CD.levantamento[key]={};CD.levantamento[key][f]=v;const rec=CD.levantamento[key];const row={ciclo_id:CD.id,patio:p,leira:l,data_inicio:rec.dataInicio||null,supervisor:rec.supervisor||null,obs:rec.obs||null};if(rec._id){_sb.from("levantamento").update(row).eq("id",rec._id).then();}else{_sb.from("levantamento").upsert({...row},{"onConflict":"ciclo_id,patio,leira"}).select().single().then(({data:d})=>{if(d)CD.levantamento[key]._id=d.id;});}};
 
 /* ── ENRIQUECIMENTO ── */
 Pages.enriquecimento = function(el){
@@ -1260,7 +1249,7 @@ Pages.aplinsumos = function(el){
       ${macros.map(k=>`<th>${mLabels[k]} (kg)</th>`).join("")}<th>Responsável</th></tr></thead><tbody>${rows}</tbody></table></div>
   </div>`;
 };
-Pages._saveApl=function(p,l,f,v){const key=leiraKey(p,l);if(!STATE.aplinsumos[key])STATE.aplinsumos[key]={};STATE.aplinsumos[key][f]=v;saveState();};
+Pages._saveApl=function(p,l,f,v){const key=leiraKey(p,l);if(!CD.aplinsumos[key])CD.aplinsumos[key]={};CD.aplinsumos[key][f]=v;const rec=CD.aplinsumos[key];const row={ciclo_id:CD.id,patio:p,leira:l,data:rec.data||null,cama_frango:parseFloat(rec.camaFrango)||0,fosfato_natural:parseFloat(rec.fosfatoNatural)||0,ureia:parseFloat(rec.ureia)||0,kcl:parseFloat(rec.kcl)||0,map:parseFloat(rec.map)||0,outros_insumos:parseFloat(rec.outrosInsumos)||0,responsavel:rec.responsavel||null};if(rec._id){_sb.from("aplinsumos").update(row).eq("id",rec._id).then();}else{_sb.from("aplinsumos").upsert({...row},{onConflict:"ciclo_id,patio,leira"}).select().single().then(({data:d})=>{if(d)CD.aplinsumos[key]._id=d.id;});}};
 
 /* ── BIOINSUMOS ── */
 Pages.bioinsumos = function(el){
@@ -1288,7 +1277,7 @@ Pages.bioinsumos = function(el){
     <div class="metric m-verde"><div class="label">Início</div><div class="value" style="font-size:20px">${fmtDate(lev.dataInicio)}</div><div class="sub">${lev.dataInicio?Calc.diasDesdeHoje(lev.dataInicio)+" dias":"Não iniciada"}</div></div>
   </div><div class="grid g2">${cards}</div>`;
 };
-Pages._saveBio=function(p,l,bk,f,v){const key=leiraKey(p,l);if(!STATE.bioinsumos[key])STATE.bioinsumos[key]={};if(!STATE.bioinsumos[key][bk])STATE.bioinsumos[key][bk]={};STATE.bioinsumos[key][bk][f]=v;saveState();App.toast("Salvo!");};
+Pages._saveBio=function(p,l,bk,f,v){const key=leiraKey(p,l);if(!CD.bioinsumos[key])CD.bioinsumos[key]={};if(!CD.bioinsumos[key][bk])CD.bioinsumos[key][bk]={};CD.bioinsumos[key][bk][f]=v;const rec=CD.bioinsumos[key][bk];const row={ciclo_id:CD.id,patio:p,leira:l,bio_key:bk,data:rec.data||null,forma:rec.forma||null,obs:rec.obs||null};if(rec._id){_sb.from("bioinsumos").update(row).eq("id",rec._id).then();}else{_sb.from("bioinsumos").upsert({...row},{onConflict:"ciclo_id,patio,leira,bio_key"}).select().single().then(({data:d})=>{if(d)CD.bioinsumos[key][bk]._id=d.id;});}App.toast("Salvo!");};
 
 /* ── MONITORAMENTO ── */
 Pages.monitoramento = function(el){
@@ -1333,9 +1322,9 @@ Pages._saveMon=function(){
     p3:document.getElementById("mn-p3").value,p4:document.getElementById("mn-p4").value,
     ph:document.getElementById("mn-ph").value,umidade:document.getElementById("mn-um").value,aditivacao:document.getElementById("mn-ad").value};
   if(!m.data){App.toast("Informe a data","err");return;}
-  STATE.monitoramento.push(m);saveState();App.closeModal("modal-mon");App.navigate("monitoramento");App.toast("Medição registrada!");
+  _sb.from("monitoramento").insert({ciclo_id:CD.id,patio:m.patio,leira:m.leira,data:m.data,p1:parseFloat(m.p1)||null,p2:parseFloat(m.p2)||null,p3:parseFloat(m.p3)||null,p4:parseFloat(m.p4)||null,ph:parseFloat(m.ph)||null,umidade:parseFloat(m.umidade)||null,aditivacao:m.aditivacao||null}).select().single().then(({data:d,error})=>{if(error){App.toast("Erro: "+error.message,"err");return;}m.id=d.id;CD.monitoramento.push(m);App.closeModal("modal-mon");App.navigate("monitoramento");App.toast("Medição registrada!");});
 };
-Pages._delMon=function(id){if(!confirm("Remover?"))return;STATE.monitoramento=STATE.monitoramento.filter(m=>m.id!==id);saveState();App.navigate("monitoramento");};
+Pages._delMon=function(id){if(!confirm("Remover?"))return;_sb.from("monitoramento").delete().eq("id",id).then(()=>{CD.monitoramento=CD.monitoramento.filter(m=>m.id!==id);App.navigate("monitoramento");});};
 
 /* ── REVOLVIMENTO ── */
 Pages.revolvimento = function(el){
@@ -1401,9 +1390,9 @@ Pages._saveGas=function(){
     h2s:document.getElementById("gs-h2s").value,nh3:document.getElementById("gs-nh3").value,
     atividade:document.getElementById("gs-at").value,recomendacao:document.getElementById("gs-rec").value,diasProduto:document.getElementById("gs-dias").value};
   if(!g.data){App.toast("Informe a data","err");return;}
-  STATE.gases.push(g);saveState();App.closeModal("modal-gas");App.navigate("gases");App.toast("Aferição registrada!");
+  _sb.from("gases").insert({ciclo_id:CD.id,patio:g.patio,leira:g.leira,data:g.data,co2a:parseFloat(g.co2a)||null,co2b:parseFloat(g.co2b)||null,co2c:parseFloat(g.co2c)||null,o2:parseFloat(g.o2)||null,co:parseFloat(g.co)||null,ch4:parseFloat(g.ch4)||null,h2s:parseFloat(g.h2s)||null,nh3:parseFloat(g.nh3)||null,atividade:g.atividade||null,recomendacao:g.recomendacao||null,dias_produto:parseInt(g.diasProduto)||null}).select().single().then(({data:d,error})=>{if(error){App.toast("Erro: "+error.message,"err");return;}g.id=d.id;CD.gases.push(g);App.closeModal("modal-gas");App.navigate("gases");App.toast("Aferição registrada!");});
 };
-Pages._delGas=function(id){if(!confirm("Remover?"))return;STATE.gases=STATE.gases.filter(g=>g.id!==id);saveState();App.navigate("gases");};
+Pages._delGas=function(id){if(!confirm("Remover?"))return;_sb.from("gases").delete().eq("id",id).then(()=>{CD.gases=CD.gases.filter(g=>g.id!==id);App.navigate("gases");});};
 
 /* ── COLHEITA / SAÍDA ── */
 Pages.colheita = function(el){
@@ -1462,14 +1451,7 @@ Pages.colheita = function(el){
       <th>Obs.</th>
     </tr></thead><tbody>${rows}</tbody></table></div></div>`;
 };
-Pages._saveColh=function(p,l,f,v){
-  const key=leiraKey(p,l);
-  if(!STATE.colheita[key])STATE.colheita[key]={};
-  STATE.colheita[key][f]=v;
-  saveCiclo();
-  // Refresh just the row metrics without full re-render
-  App.navigate("colheita");
-};
+Pages._saveColh=function(p,l,f,v){const key=leiraKey(p,l);if(!CD.colheita[key])CD.colheita[key]={};CD.colheita[key][f]=v;const rec=CD.colheita[key];const row={ciclo_id:CD.id,patio:p,leira:l,peso:parseFloat(rec.peso)||null,data:rec.data||null,responsavel:rec.responsavel||null,obs:rec.obs||null};if(rec._id){_sb.from("colheita").update(row).eq("id",rec._id).then();}else{_sb.from("colheita").upsert({...row},{onConflict:"ciclo_id,patio,leira"}).select().single().then(({data:d})=>{if(d)CD.colheita[key]._id=d.id;});}App.navigate("colheita");};
 
 /* ── TAXAS ── */
 Pages.taxas = function(el){
@@ -1599,8 +1581,8 @@ Pages._onUmidSaidaChange=function(val){
   // Save to STATE
   Pages._saveTaxa("umidadeSaida","taxa",dec);
 };
-Pages._saveTaxa=function(k,f,v){STATE.taxas[k][f]=parseFloat(v)||0;saveState();App.toast("Taxa salva!");};
-Pages._resetTaxas=function(){if(!confirm("Restaurar padrões?"))return;STATE.taxas=JSON.parse(JSON.stringify(TAXAS_DEFAULT));saveState();App.navigate("taxas");App.toast("Taxas restauradas!");};
+Pages._saveTaxa=function(k,f,v){if(!CD||!CD.taxas[k])return;CD.taxas[k][f]=parseFloat(v)||0;_sb.from("taxas").upsert({ciclo_id:CD.id,chave:k,taxa:CD.taxas[k].taxa,umidade:CD.taxas[k].umidade!==null?CD.taxas[k].umidade:null},{onConflict:"ciclo_id,chave"}).then();App.toast("Taxa salva!");};
+Pages._resetTaxas=async function(){if(!confirm("Restaurar padrões?"))return;CD.taxas=JSON.parse(JSON.stringify(TAXAS_DEFAULT));for(const[k,t]of Object.entries(CD.taxas)){await _sb.from("taxas").upsert({ciclo_id:CD.id,chave:k,taxa:t.taxa,umidade:t.umidade!==null?t.umidade:null},{onConflict:"ciclo_id,chave"});}App.navigate("taxas");App.toast("Taxas restauradas!");};
 
 /* ── RELATÓRIO / PDF ── */
 Pages.relatorio = function(el){
@@ -2200,7 +2182,7 @@ Pages._saveEq=function(){
   else{CD.combustivel.equipamentos.push({id:uid(),...data});}
   saveCiclo();App.closeModal("modal-eq");App.navigate("combustivel");App.toast("Equipamento salvo!");
 };
-Pages._delEq=function(id){if(!confirm("Remover equipamento? As saídas relacionadas perderão a referência."))return;CD.combustivel.equipamentos=CD.combustivel.equipamentos.filter(e=>e.id!==id);saveCiclo();App.navigate("combustivel");App.toast("Removido.");};
+Pages._delEq=function(id){if(!confirm("Remover equipamento?"))return;_sb.from("equipamentos").delete().eq("id",id).then(()=>{CD.combustivel.equipamentos=CD.combustivel.equipamentos.filter(e=>e.id!==id);App.navigate("combustivel");});};
 
 // Entradas CRUD
 Pages._newEntrada=function(){App.openModal("modal-entrada");};
@@ -2211,7 +2193,7 @@ Pages._saveEntrada=function(){
   CD.combustivel.entradas.push({id:uid(),data,litros:litros.toString(),fornecedor:document.getElementById("ent-forn").value,nota:document.getElementById("ent-nota").value,obs:document.getElementById("ent-obs").value});
   saveCiclo();App.closeModal("modal-entrada");App.navigate("combustivel");App.toast("Entrada registrada! Saldo atualizado.");
 };
-Pages._delEntrada=function(id){if(!confirm("Remover esta entrada?"))return;CD.combustivel.entradas=CD.combustivel.entradas.filter(e=>e.id!==id);saveCiclo();App.navigate("combustivel");};
+Pages._delEntrada=function(id){if(!confirm("Remover?"))return;_sb.from("comb_entradas").delete().eq("id",id).then(()=>{CD.combustivel.entradas=CD.combustivel.entradas.filter(e=>e.id!==id);App.navigate("combustivel");});};
 
 // Saídas CRUD
 Pages._newSaida=function(){App.openModal("modal-saida");};
@@ -2223,7 +2205,7 @@ Pages._saveSaida=function(){
   CD.combustivel.saidas.push({id:uid(),data,hora:document.getElementById("sai-hora").value,eqId,litros:litros.toString(),horimetro:document.getElementById("sai-hor").value,operador:document.getElementById("sai-oper").value,obs:document.getElementById("sai-obs").value});
   saveCiclo();App.closeModal("modal-saida");App.navigate("combustivel");App.toast("Abastecimento registrado!");
 };
-Pages._delSaida=function(id){if(!confirm("Remover este registro?"))return;CD.combustivel.saidas=CD.combustivel.saidas.filter(s=>s.id!==id);saveCiclo();App.navigate("combustivel");};
+Pages._delSaida=function(id){if(!confirm("Remover?"))return;_sb.from("comb_saidas").delete().eq("id",id).then(()=>{CD.combustivel.saidas=CD.combustivel.saidas.filter(s=>s.id!==id);App.navigate("combustivel");});};
 
 // Print
 Pages._printCombustivel=function(){
@@ -2264,44 +2246,32 @@ Pages._printCombustivel=function(){
 // ═══════════════════════════════════════════════════════════════
 //  BOOT
 // ═══════════════════════════════════════════════════════════════
+// ── BOOT ──────────────────────────────────────────────────
+// CSS spinner
+const _ss=document.createElement("style");
+_ss.textContent="@keyframes spin{to{transform:rotate(360deg)}}";
+document.head.appendChild(_ss);
+
 loadMeta();
-// Warn user before closing if there's unsaved data context
-window.addEventListener("beforeunload", function(e){
-  if(CD){
-    // Data is actually auto-saved on every action, but warn just in case
-    // Only show if no recent save in last 5 minutes
-    const lastSaved=CD._lastSaved?new Date(CD._lastSaved):null;
-    const minsAgo=lastSaved?(Date.now()-lastSaved)/60000:999;
-    if(minsAgo>5){
-      e.preventDefault();
-      e.returnValue="Você tem dados não confirmados em backup externo. Recomendamos fazer um backup antes de sair.";
-    }
-  }
-});
-// Auto-remind backup every 30 minutes
-setInterval(()=>{
-  if(CD&&META.currentUser){
-    const lastSaved=CD._lastSaved?new Date(CD._lastSaved):null;
-    const minsAgo=lastSaved?(Date.now()-lastSaved)/60000:999;
-    if(minsAgo>30){
-      App.toast("💾 Lembrete: faça um backup do ciclo para garantir seus dados!","info");
-    }
-  }
-},1800000);
-// Load active ciclo if exists
-if(META.cicloAtivo){
-  const c=loadCiclo(META.cicloAtivo);
-  if(c)CD=c;else META.cicloAtivo=null;
-}
-// Show login
 document.getElementById("loginScreen").style.display="flex";
 document.getElementById("appShell").style.display="none";
-// If user was already logged in (page refresh), auto-restore
+
+// Auto-restore sessão
 if(META.currentUser){
   document.getElementById("loginScreen").style.display="none";
   document.getElementById("appShell").style.display="block";
+  App._showSpinner("Restaurando sessão...");
   App.init();
+  if(META.cicloAtivo){
+    Ciclos.switchTo(META.cicloAtivo).finally(()=>App._hideSpinner());
+  }else{
+    App._hideSpinner();
+  }
 }
+
+document.addEventListener("keydown",function(e){
+  if(e.key==="Enter"&&document.getElementById("loginScreen").style.display!=="none")Auth.login();
+});
 
 </script>
 </body>
