@@ -466,7 +466,8 @@ const DB = {
   },
   async loginUsuario(username,senha){
     const {data,error}=await sb.from('usuarios').select('*').eq('username',username).eq('senha_hash',senha).eq('ativo',true).single();
-    if(error||!data)return null;
+    if(error){console.error('loginUsuario error:',error);throw error;}
+    if(!data)return null;
     return{id:data.id,user:data.username,role:data.role,customPages:data.custom_pages};
   },
   async salvarUsuario(id,username,senha,role,customPages){
@@ -974,8 +975,15 @@ const Auth = {
     if(!user||!senha){document.getElementById("loginErr").textContent="Preencha usuário e senha.";return;}
     document.getElementById("loginErr").textContent="Verificando...";
     try{
+      // Test connection first
+      const {data:testData, error:testErr} = await sb.from('usuarios').select('count').limit(1);
+      if(testErr){
+        console.error('Supabase error:', testErr);
+        document.getElementById("loginErr").textContent="Erro de conexão: " + (testErr.message||testErr.code||JSON.stringify(testErr));
+        return;
+      }
       const found = await DB.loginUsuario(user, senha);
-      if(!found){document.getElementById("loginErr").textContent="Usuário ou senha incorretos.";return;}
+      if(!found){document.getElementById("loginErr").textContent="Usuário ou senha incorretos. Verifique se o SQL foi executado no Supabase.";return;}
       META.currentUser=found;
       saveMeta();
       document.getElementById("loginErr").textContent="";
