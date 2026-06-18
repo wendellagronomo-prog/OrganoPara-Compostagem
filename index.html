@@ -522,10 +522,12 @@ const Auth = {
     const senha=document.getElementById("loginPass").value;
     if(!user||!senha){document.getElementById("loginErr").textContent="Preencha usuário e senha.";return;}
     document.getElementById("loginErr").textContent="Verificando...";
-    _sb.from("usuarios").select("*").eq("login",user).eq("senha",senha).eq("ativo",true).single()
+    _sb.from("usuarios").select("*").eq("login",user).eq("senha",senha)
     .then(({data,error})=>{
-      if(error||!data){document.getElementById("loginErr").textContent="Usuário ou senha incorretos.";return;}
-      const found={id:data.id,user:data.login,senha:data.senha,role:data.perfil,customPages:null};
+      if(error){document.getElementById("loginErr").textContent="Erro: "+error.message;return;}
+      const row=data&&data.find(u=>u.ativo!==false);
+      if(!row){document.getElementById("loginErr").textContent="Usuário ou senha incorretos.";return;}
+      const found={id:row.id,user:row.login,senha:row.senha,role:row.perfil,customPages:null};
       META.currentUser=found;saveMeta();
       document.getElementById("loginErr").textContent="";
       document.getElementById("loginScreen").style.display="none";
