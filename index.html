@@ -235,7 +235,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <!-- Ciclo switcher -->
     <div class="sidebar-ciclo">
       <div class="sidebar-ciclo-label">Ciclo de produção ativo</div>
-      <select class="sidebar-ciclo-select" id="sidebarCicloSel" onchange="Ciclos.switchTo(this.value)"></select>
+      <select class="sidebar-ciclo-select" id="sidebarCicloSel" onchange="Ciclos.switchTo(this.value).then(()=>App.navigate(Auth.defaultPage()))"></select>
       <div class="sidebar-ciclo-btns">
         <button class="ciclo-btn primary" onclick="App.navigate('ciclos')"><i class="ti ti-settings" style="font-size:12px"></i> Gerenciar</button>
         <button class="ciclo-btn" onclick="Ciclos.exportCicloAtual()"><i class="ti ti-download" style="font-size:12px"></i> Backup</button>
@@ -262,6 +262,9 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
       </div>
       <div class="filter-bar" id="filterBar">
         <div class="ciclo-badge" id="cicloBadge">—</div>
+        <button class="btn btn-sm" onclick="if(CD&&META.cicloAtivo){App._showSpinner('Sincronizando...');_carregarDadosCiclo(META.cicloAtivo).then(dados=>{Object.assign(CD,dados);App._hideSpinner();App.refresh();App.toast('Dados sincronizados!');});}" title="Sincronizar dados" style="padding:5px 8px">
+          <i class="ti ti-refresh"></i>
+        </button>
       </div>
     </header>
     <main class="content" id="content"></main>
@@ -842,7 +845,7 @@ Pages.ciclos = function(el){
         <span><i class="ti ti-stack-2" style="color:var(--verde)"></i> ${c.nLeiras} leiras · ${c.nViagens} viagens</span>
       </div>
       <div class="actions">
-        ${META.cicloAtivo!==c.id?`<button class="btn btn-sm btn-primary" onclick="Ciclos.switchTo('${c.id}')"><i class="ti ti-toggle-right"></i> Ativar</button>`:`<span class="badge bl">Ciclo ativo</span>`}
+        ${META.cicloAtivo!==c.id?`<button class="btn btn-sm btn-primary" onclick="Ciclos.switchTo('${c.id}').then(()=>App.navigate(Auth.defaultPage()))"><i class="ti ti-toggle-right"></i> Ativar</button>`:`<span class="badge bl">Ciclo ativo</span>`}
         <button class="btn btn-sm" onclick="Pages._editCiclo('${c.id}')"><i class="ti ti-pencil"></i> Editar</button>
         <button class="btn btn-sm" onclick="Pages._exportCiclo('${c.id}')"><i class="ti ti-download"></i> Backup</button>
         ${c.status==="ativo"?`<button class="btn btn-sm" onclick="Ciclos.encerrar('${c.id}')"><i class="ti ti-flag"></i> Encerrar</button>`:""}
@@ -968,7 +971,8 @@ Pages._editUser=function(id){
   const u=META.users.find(x=>String(x.id)===String(id));if(!u)return;
   document.getElementById("usr-id").value=u.id;
   document.getElementById("usr-user").value=u.user;
-  document.getElementById("usr-senha").value=u.senha;
+  document.getElementById("usr-senha").value="";
+  document.getElementById("usr-senha").placeholder="Deixe vazio para manter a senha atual";
   document.getElementById("usr-role").value=u.role||"user01";
   // Populate checkboxes from user's custom pages (or role default)
   setTimeout(()=>{
@@ -1141,7 +1145,11 @@ Pages._toggleEtapa=function(p,l,k){
   if(!CD.painel[key])CD.painel[key]={};
   if(!CD.painel[key].etapas)CD.painel[key].etapas={};
   CD.painel[key].etapas[k]=!CD.painel[key].etapas[k];
-  saveCiclo();App.navigate("ficha");
+  const et=CD.painel[key].etapas;
+  const prow={ciclo_id:CD.id,patio:p,leira:l,etapa_levantamento:!!et.levantamento,etapa_enriquecimento:!!et.enriquecimento,etapa_insumos:!!et.insumos,etapa_monitoramento:!!et.monitoramento,etapa_gases:!!et.gases,etapa_revolvimento:!!et.revolvimento};
+  if(CD.painel[key]._id){_sb.from("painel").update(prow).eq("id",CD.painel[key]._id).then();}
+  else{_sb.from("painel").upsert({...prow},{onConflict:"ciclo_id,patio,leira"}).select().single().then(({data:d})=>{if(d)CD.painel[key]._id=d.id;});}
+  App.navigate("ficha");
 };
 
 /* ── VIAGENS ── */
@@ -1363,7 +1371,7 @@ Pages.revolvimento = function(el){
 };
 Pages._revCtx=null;
 Pages._openRev=function(p,l){Pages._revCtx={p,l};document.getElementById("rev-info").textContent=`Leira: ${l} — ${p}`;App.openModal("modal-rev");};
-Pages._saveRev=function(){if(!Pages._revCtx)return;const{p,l}=Pages._revCtx;const d=document.getElementById("rv-d").value;if(!d){App.toast("Informe a data","err");return;}const key=leiraKey(p,l);if(!STATE.revolvimento[key])STATE.revolvimento[key]={entries:[]};STATE.revolvimento[key].entries.push({data:d,operador:document.getElementById("rv-op").value});saveState();App.closeModal("modal-rev");App.navigate("revolvimento");App.toast("Revolvimento registrado!");};
+Pages._saveRev=function(){if(!Pages._revCtx)return;const{p,l}=Pages._revCtx;const d=document.getElementById("rv-d").value;if(!d){App.toast("Informe a data","err");return;}const key=leiraKey(p,l);if(!STATE.revolvimento[key])STATE.revolvimento[key]={entries:[]};const operador=document.getElementById("rv-op").value;_sb.from("revolvimento").insert({ciclo_id:CD.id,patio:p,leira:l,data:d,operador}).select().single().then(({data:rd,error})=>{if(error){App.toast("Erro: "+error.message,"err");return;}const key2=leiraKey(p,l);if(!CD.revolvimento[key2])CD.revolvimento[key2]={entries:[]};CD.revolvimento[key2].entries.push({data:d,operador,_id:rd.id});App.closeModal("modal-rev");App.navigate("revolvimento");App.toast("Revolvimento registrado!");});};
 
 /* ── GASES ── */
 Pages.gases = function(el){
@@ -2194,9 +2202,7 @@ Pages._saveEq=function(){
   const nome=document.getElementById("eq-nome").value.trim();
   if(!nome){App.toast("Informe o nome do equipamento","err");return;}
   const data={nome,tipo:document.getElementById("eq-tipo").value,placa:document.getElementById("eq-placa").value,obs:document.getElementById("eq-obs").value};
-  if(id){const eq=CD.combustivel.equipamentos.find(e=>e.id===id);if(eq)Object.assign(eq,data);}
-  else{CD.combustivel.equipamentos.push({id:uid(),...data});}
-  saveCiclo();App.closeModal("modal-eq");App.navigate("combustivel");App.toast("Equipamento salvo!");
+  if(id){_sb.from("equipamentos").update(data).eq("id",id).then(({error})=>{if(error){App.toast("Erro: "+error.message,"err");return;}const eq=CD.combustivel.equipamentos.find(e=>String(e.id)===String(id));if(eq)Object.assign(eq,data);App.closeModal("modal-eq");App.navigate("combustivel");App.toast("Equipamento salvo!");});}else{_sb.from("equipamentos").insert({ciclo_id:CD.id,...data}).select().single().then(({data:d,error})=>{if(error){App.toast("Erro: "+error.message,"err");return;}CD.combustivel.equipamentos.push({id:d.id,...data});App.closeModal("modal-eq");App.navigate("combustivel");App.toast("Equipamento salvo!");});}
 };
 Pages._delEq=function(id){if(!confirm("Remover equipamento?"))return;_sb.from("equipamentos").delete().eq("id",id).then(()=>{CD.combustivel.equipamentos=CD.combustivel.equipamentos.filter(e=>e.id!==id);App.navigate("combustivel");});};
 
@@ -2206,8 +2212,7 @@ Pages._saveEntrada=function(){
   const litros=parseFloat(document.getElementById("ent-litros").value);
   if(!litros||litros<=0){App.toast("Informe a quantidade em litros","err");return;}
   const data=document.getElementById("ent-data").value;if(!data){App.toast("Informe a data","err");return;}
-  CD.combustivel.entradas.push({id:uid(),data,litros:litros.toString(),fornecedor:document.getElementById("ent-forn").value,nota:document.getElementById("ent-nota").value,obs:document.getElementById("ent-obs").value});
-  saveCiclo();App.closeModal("modal-entrada");App.navigate("combustivel");App.toast("Entrada registrada! Saldo atualizado.");
+  _sb.from("comb_entradas").insert({ciclo_id:CD.id,data,litros,fornecedor:document.getElementById("ent-forn").value,nota:document.getElementById("ent-nota").value,obs:document.getElementById("ent-obs").value}).select().single().then(({data:d,error})=>{if(error){App.toast("Erro: "+error.message,"err");return;}CD.combustivel.entradas.push({id:d.id,data,litros,fornecedor:d.fornecedor,nota:d.nota,obs:d.obs});App.closeModal("modal-entrada");App.navigate("combustivel");App.toast("Entrada registrada!");});
 };
 Pages._delEntrada=function(id){if(!confirm("Remover?"))return;_sb.from("comb_entradas").delete().eq("id",id).then(()=>{CD.combustivel.entradas=CD.combustivel.entradas.filter(e=>e.id!==id);App.navigate("combustivel");});};
 
@@ -2218,8 +2223,12 @@ Pages._saveSaida=function(){
   if(!litros||litros<=0){App.toast("Informe a quantidade em litros","err");return;}
   const data=document.getElementById("sai-data").value;if(!data){App.toast("Informe a data","err");return;}
   const eqId=document.getElementById("sai-eq").value;if(!eqId){App.toast("Selecione o equipamento","err");return;}
-  CD.combustivel.saidas.push({id:uid(),data,hora:document.getElementById("sai-hora").value,eqId,litros:litros.toString(),horimetro:document.getElementById("sai-hor").value,operador:document.getElementById("sai-oper").value,obs:document.getElementById("sai-obs").value});
-  saveCiclo();App.closeModal("modal-saida");App.navigate("combustivel");App.toast("Abastecimento registrado!");
+  const saiRow={ciclo_id:CD.id,equipamento_id:eqId,data,hora:document.getElementById("sai-hora").value||null,litros,horimetro:parseFloat(document.getElementById("sai-hor").value)||null,operador:document.getElementById("sai-oper").value,obs:document.getElementById("sai-obs").value};
+  _sb.from("comb_saidas").insert(saiRow).select().single().then(({data:d,error})=>{
+    if(error){App.toast("Erro: "+error.message,"err");return;}
+    CD.combustivel.saidas.push({id:d.id,data,hora:d.hora,eqId,litros,horimetro:d.horimetro,operador:d.operador,obs:d.obs});
+    App.closeModal("modal-saida");App.navigate("combustivel");App.toast("Abastecimento registrado!");
+  });
 };
 Pages._delSaida=function(id){if(!confirm("Remover?"))return;_sb.from("comb_saidas").delete().eq("id",id).then(()=>{CD.combustivel.saidas=CD.combustivel.saidas.filter(s=>s.id!==id);App.navigate("combustivel");});};
 
