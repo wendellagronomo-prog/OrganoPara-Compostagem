@@ -512,12 +512,8 @@ const STATE = new Proxy({},{
 //  AUTH / ROLES
 // ═══════════════════════════════════════════════════════════════
 const ROLE_DEFS = {
-  master:  {label:"Usuário Master",   pages:["ciclos","usuarios","ficha","viagens","levantamento","enriquecimento","aplinsumos","bioinsumos","monitoramento","revolvimento","gases","colheita","taxas","relatorio","painel","combustivel"]},
-  user01:  {label:"Usuário 01",       pages:["viagens","monitoramento"]},
-  user02:  {label:"Usuário 02",       pages:["enriquecimento","aplinsumos"]},
-  user03:  {label:"Usuário 03",       pages:["bioinsumos"]},
-  user04:  {label:"Usuário 04",       pages:["revolvimento"]},
-  user05:  {label:"Usuário 05",       pages:["levantamento","relatorio","ficha"]},
+  master:   {label:"Usuário Master", pages:["ciclos","usuarios","ficha","viagens","levantamento","enriquecimento","aplinsumos","bioinsumos","monitoramento","revolvimento","gases","colheita","taxas","relatorio","painel","combustivel"]},
+  usuario:  {label:"Usuário",        pages:[]},
 };
 
 const Auth = {
@@ -548,8 +544,8 @@ const Auth = {
     document.getElementById("loginUser").value="";
     document.getElementById("loginPass").value="";
   },
-  canAccess(p){const u=META.currentUser;if(!u)return false;const pages=u.customPages||(ROLE_DEFS[u.role]||{}).pages||[];return pages.includes(p);},
-  defaultPage(){const u=META.currentUser;if(!u)return"viagens";const pages=u.customPages||(ROLE_DEFS[u.role]||{}).pages||[];return pages.length?pages[0]:"viagens";},
+  canAccess(p){const u=META.currentUser;if(!u)return false;if(u.role==="master")return true;const pages=u.customPages||[];return pages.includes(p);},
+  defaultPage(){const u=META.currentUser;if(!u)return"viagens";if(u.role==="master")return"ciclos";const pages=u.customPages||[];return pages.length?pages[0]:"ciclos";},
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -917,9 +913,9 @@ Pages._exportCiclo=function(id){
 /* ── USUÁRIOS ── */
 Pages.usuarios = function(el){
   const cards=META.users.map(u=>{
-    const rd=ROLE_DEFS[u.role]||{};
-    const effPages=u.customPages||(rd.pages||[]);
-    const isCustom=!!u.customPages;
+    const rd=ROLE_DEFS[u.role]||ROLE_DEFS["usuario"]||{};
+    const effPages=u.customPages||[];
+    const isCustom=true;
     const perms=effPages.map(p=>{const def=PAGE_DEFS.find(d=>d.id===p);return def?`<span class="badge ${isCustom?"bl":"bc"}" style="font-size:10px">${def.label}</span>`:""}).join("");
     return`<div class="user-card">
       <div class="user-card-head">
@@ -942,29 +938,29 @@ Pages.usuarios = function(el){
   </div>`;
   _modal("modal-user","Usuário","ti-user",`
     <input type="hidden" id="usr-id"/>
-    <div class="field"><label>Nome de usuário</label><input id="usr-user" placeholder="usuario01"/></div>
-    <div class="field"><label>Senha</label><input type="password" id="usr-senha" placeholder="Mínimo 4 caracteres"/></div>
-    <div class="field"><label>Perfil base</label>
-      <select id="usr-role" onchange="Pages._onRoleChange()">
-        ${Object.entries(ROLE_DEFS).map(([k,v])=>`<option value="${k}">${v.label}</option>`).join("")}
-      </select>
-      <div style="font-size:11px;color:var(--ink-soft);margin-top:3px">Selecione um perfil base — depois personalize as páginas abaixo</div>
+    <input type="hidden" id="usr-role" value="usuario"/>
+    <div class="field"><label>Nome de usuário</label><input id="usr-user" placeholder="nome do usuário"/></div>
+    <div class="field"><label>Senha <span id="usr-senha-hint" style="font-size:10px;color:var(--ink-soft)"></span></label>
+      <input type="password" id="usr-senha" placeholder="Mínimo 4 caracteres"/>
     </div>
     <div class="field">
-      <label>Páginas permitidas <span style="font-size:10px;color:var(--ink-soft)">(personalize para este usuário)</span></label>
-      <div id="usr-pages-check" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:6px;max-height:200px;overflow-y:auto;padding:10px;border:1.5px solid var(--linha);border-radius:8px">
-        ${PAGE_DEFS.map(p=>`<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer;padding:2px 0">
-          <input type="checkbox" class="usr-page-cb" value="${p.id}" style="width:14px;height:14px;accent-color:var(--laranja)"/> ${p.label}
+      <label>Módulos que este usuário pode acessar</label>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;margin-top:8px;padding:12px;border:1.5px solid var(--linha);border-radius:8px;max-height:220px;overflow-y:auto">
+        ${PAGE_DEFS.filter(p=>p.id!=="usuarios"&&p.id!=="ciclos").map(p=>`<label style="display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;padding:3px 0">
+          <input type="checkbox" class="usr-page-cb" value="${p.id}" style="width:15px;height:15px;accent-color:var(--laranja);cursor:pointer"/> ${p.label}
         </label>`).join("")}
       </div>
+      <div style="font-size:11px;color:var(--ink-soft);margin-top:4px">Ciclos de Produção e Cadastro de Usuários são exclusivos do Master.</div>
     </div>`,()=>Pages._saveUser());
 };
 Pages._newUser=function(){
   document.getElementById("usr-id").value="";
   document.getElementById("usr-user").value="";
   document.getElementById("usr-senha").value="";
-  document.getElementById("usr-role").value="user01";
-  Pages._onRoleChange();
+  document.getElementById("usr-senha-hint").textContent="";
+  document.getElementById("usr-senha").placeholder="Mínimo 4 caracteres";
+  // Uncheck all pages
+  setTimeout(()=>{document.querySelectorAll(".usr-page-cb").forEach(cb=>cb.checked=false);},50);
   App.openModal("modal-user");
 };
 Pages._editUser=function(id){
@@ -973,7 +969,8 @@ Pages._editUser=function(id){
   document.getElementById("usr-user").value=u.user;
   document.getElementById("usr-senha").value="";
   document.getElementById("usr-senha").placeholder="Deixe vazio para manter a senha atual";
-  document.getElementById("usr-role").value=u.role||"user01";
+  document.getElementById("usr-senha-hint").textContent="(deixe vazio para manter a senha atual)";
+  document.getElementById("usr-role").value=u.role||"usuario";
   // Populate checkboxes from user's custom pages (or role default)
   setTimeout(()=>{
     const pages=u.customPages||(ROLE_DEFS[u.role]||{}).pages||[];
@@ -983,14 +980,6 @@ Pages._editUser=function(id){
   },50);
   App.openModal("modal-user");
 };
-Pages._onRoleChange=function(){
-  const role=document.getElementById("usr-role").value;
-  const defaultPages=(ROLE_DEFS[role]||{}).pages||[];
-  document.querySelectorAll(".usr-page-cb").forEach(cb=>{
-    cb.checked=defaultPages.includes(cb.value);
-  });
-};
-
 Pages._saveUser=function(){
   const id=document.getElementById("usr-id").value;
   const user=document.getElementById("usr-user").value.trim();
@@ -998,7 +987,8 @@ Pages._saveUser=function(){
   const role=document.getElementById("usr-role").value;
   if(!user){App.toast("Preencha o nome de usuário","err");return;}
   // Build update row - only include senha if it was changed
-  const urow={username:user,role,ativo:true};
+  const actualRole=META.currentUser&&META.currentUser.role==="master"&&user==="master"?"master":"usuario";
+  const urow={username:user,role:actualRole,ativo:true};
   if(senhaField&&!senhaField.startsWith("•")){
     if(senhaField.length<4){App.toast("Senha mínima de 4 caracteres","err");return;}
     urow.senha=senhaField;
