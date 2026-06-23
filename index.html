@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width,initial-scale=1.0,maximum-scale=1.0,user-scalable=no">
 <meta name="theme-color" content="#1b4332">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
@@ -235,7 +235,7 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
     <!-- Ciclo switcher -->
     <div class="sidebar-ciclo">
       <div class="sidebar-ciclo-label">Ciclo de produção ativo</div>
-      <select class="sidebar-ciclo-select" id="sidebarCicloSel" onchange="Ciclos.switchTo(this.value).then(()=>App.navigate(Auth.defaultPage()))"></select>
+      <select class="sidebar-ciclo-select" id="sidebarCicloSel" onchange="Ciclos.switchTo(this.value)"></select>
       <div class="sidebar-ciclo-btns">
         <button class="ciclo-btn primary" onclick="App.navigate('ciclos')"><i class="ti ti-settings" style="font-size:12px"></i> Gerenciar</button>
         <button class="ciclo-btn" onclick="Ciclos.exportCicloAtual()"><i class="ti ti-download" style="font-size:12px"></i> Backup</button>
@@ -262,9 +262,6 @@ td.num{text-align:right;font-variant-numeric:tabular-nums}
       </div>
       <div class="filter-bar" id="filterBar">
         <div class="ciclo-badge" id="cicloBadge">—</div>
-        <button class="btn btn-sm" onclick="if(CD&&META.cicloAtivo){App._showSpinner('Sincronizando...');_carregarDadosCiclo(META.cicloAtivo).then(dados=>{Object.assign(CD,dados);App._hideSpinner();App.refresh();App.toast('Dados sincronizados!');});}" title="Sincronizar dados" style="padding:5px 8px">
-          <i class="ti ti-refresh"></i>
-        </button>
       </div>
     </header>
     <main class="content" id="content"></main>
@@ -384,95 +381,25 @@ function defaultCicloData(id, nome){
 let META = null;  // meta state (users, cicloAtivo, filtro)
 let CD = null;    // current ciclo data
 
-// ── META: só filtro e usuário logado ficam no localStorage ──
 function loadMeta(){
   META={currentUser:null,cicloAtivo:null,filtro:{patio:"Matriz - Concórdia",leira:"1-A"},users:[]};
-  try{const r=localStorage.getItem("organopara_meta_sb");if(r){const p=JSON.parse(r);META.currentUser=p.currentUser||null;META.cicloAtivo=p.cicloAtivo||null;META.filtro=p.filtro||{patio:"Matriz - Concórdia",leira:"1-A"};}}catch(e){}
+  try{const r=localStorage.getItem("organopara_meta_sb");if(r){const p=JSON.parse(r);META.currentUser=p.currentUser||null;META.cicloAtivo=p.cicloAtivo||null;META.filtro=p.filtro||META.filtro;}}catch(e){}
 }
-function saveMeta(){
-  try{localStorage.setItem("organopara_meta_sb",JSON.stringify({currentUser:META.currentUser,cicloAtivo:META.cicloAtivo,filtro:META.filtro}));}catch(e){}
-}
+function saveMeta(){try{localStorage.setItem("organopara_meta_sb",JSON.stringify({currentUser:META.currentUser,cicloAtivo:META.cicloAtivo,filtro:META.filtro}));}catch(e){}}
 
-// ── SUPABASE: save/load ─────────────────────────────────
-const _sb = supabase.createClient("https://jcgvrmfwimxjgwouilik.supabase.co","eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpjZ3ZybWZ3aW14amd3b3VpbGlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3OTY4ODEsImV4cCI6MjA5NzM3Mjg4MX0.4hVK3hLNLPc5YrhpGE3ZP-85cYjFHapNfmfO0uhbKdg");
+function cicloStorageKey(id){return "organopara_ciclo_"+id;} // legacy
 
-// Normaliza ciclo do Supabase para o formato interno
-async function _carregarDadosCiclo(cicloId){
-  const [
-    {data:viagens},{data:levRows},{data:monitoramento},{data:gases},
-    {data:revRows},{data:bioRows},{data:aplRows},{data:painelRows},
-    {data:colheitaRows},{data:taxasRows},{data:equips},
-    {data:combEnt},{data:combSai}
-  ] = await Promise.all([
-    _sb.from("viagens").select("*").eq("ciclo_id",cicloId),
-    _sb.from("levantamento").select("*").eq("ciclo_id",cicloId),
-    _sb.from("monitoramento").select("*").eq("ciclo_id",cicloId),
-    _sb.from("gases").select("*").eq("ciclo_id",cicloId),
-    _sb.from("revolvimento").select("*").eq("ciclo_id",cicloId),
-    _sb.from("bioinsumos").select("*").eq("ciclo_id",cicloId),
-    _sb.from("aplinsumos").select("*").eq("ciclo_id",cicloId),
-    _sb.from("painel").select("*").eq("ciclo_id",cicloId),
-    _sb.from("colheita").select("*").eq("ciclo_id",cicloId),
-    _sb.from("taxas").select("*").eq("ciclo_id",cicloId),
-    _sb.from("equipamentos").select("*").eq("ciclo_id",cicloId),
-    _sb.from("comb_entradas").select("*").eq("ciclo_id",cicloId),
-    _sb.from("comb_saidas").select("*").eq("ciclo_id",cicloId),
-  ]);
-  // Levantamento
-  const levObj={};
-  (levRows||[]).forEach(r=>{levObj[leiraKey(r.patio,r.leira)]={dataInicio:r.data_inicio,supervisor:r.supervisor,obs:r.obs,_id:r.id};});
-  // Revolvimento
-  const revObj={};
-  (revRows||[]).forEach(r=>{const k=leiraKey(r.patio,r.leira);if(!revObj[k])revObj[k]={entries:[]};revObj[k].entries.push({data:r.data,operador:r.operador,_id:r.id});});
-  // Bioinsumos
-  const bioObj={};
-  (bioRows||[]).forEach(r=>{const k=leiraKey(r.patio,r.leira);if(!bioObj[k])bioObj[k]={};bioObj[k][r.bio_key]={data:r.data,forma:r.forma,obs:r.obs,_id:r.id};});
-  // Aplinsumos
-  const aplObj={};
-  (aplRows||[]).forEach(r=>{aplObj[leiraKey(r.patio,r.leira)]={data:r.data,camaFrango:r.cama_frango,fosfatoNatural:r.fosfato_natural,ureia:r.ureia,kcl:r.kcl,map:r.map,outrosInsumos:r.outros_insumos,responsavel:r.responsavel,obs:r.obs,_id:r.id};});
-  // Painel
-  const painelObj={};
-  (painelRows||[]).forEach(r=>{painelObj[leiraKey(r.patio,r.leira)]={etapas:{levantamento:r.etapa_levantamento,enriquecimento:r.etapa_enriquecimento,insumos:r.etapa_insumos,monitoramento:r.etapa_monitoramento,gases:r.etapa_gases,revolvimento:r.etapa_revolvimento},gerente:r.gerente,_id:r.id};});
-  // Colheita
-  const colheitaObj={};
-  (colheitaRows||[]).forEach(r=>{colheitaObj[leiraKey(r.patio,r.leira)]={peso:r.peso,data:r.data,responsavel:r.responsavel,obs:r.obs,_id:r.id};});
-  // Taxas
-  const taxasObj=JSON.parse(JSON.stringify(TAXAS_DEFAULT));
-  (taxasRows||[]).forEach(r=>{if(taxasObj[r.chave]){taxasObj[r.chave].taxa=parseFloat(r.taxa)||0;if(r.umidade!==null&&r.umidade!==undefined)taxasObj[r.chave].umidade=parseFloat(r.umidade);}});
-  // Viagens
-  const viagensNorm=(viagens||[]).map(v=>({id:v.id,patio:v.patio,leira:v.leira,data:v.data,hora:v.hora,placa:v.placa,ticket:v.ticket,fornecedor:v.fornecedor,tipoMP:v.tipo_mp,pesoBruto:v.peso_bruto,umidade:v.umidade,nome:v.nome}));
-  // Monitoramento
-  const monNorm=(monitoramento||[]).map(m=>({id:m.id,patio:m.patio,leira:m.leira,data:m.data,p1:m.p1,p2:m.p2,p3:m.p3,p4:m.p4,ph:m.ph,umidade:m.umidade,aditivacao:m.aditivacao}));
-  // Gases
-  const gasNorm=(gases||[]).map(g=>({id:g.id,patio:g.patio,leira:g.leira,data:g.data,co2a:g.co2a,co2b:g.co2b,co2c:g.co2c,o2:g.o2,co:g.co,ch4:g.ch4,h2s:g.h2s,nh3:g.nh3,atividade:g.atividade,recomendacao:g.recomendacao,diasProduto:g.dias_produto}));
-  // Combustível
-  const combObj={
-    equipamentos:(equips||[]).map(e=>({id:e.id,nome:e.nome,tipo:e.tipo,placa:e.placa,obs:e.obs})),
-    entradas:(combEnt||[]).map(e=>({id:e.id,data:e.data,litros:e.litros,fornecedor:e.fornecedor,nota:e.nota,obs:e.obs})),
-    saidas:(combSai||[]).map(s=>({id:s.id,data:s.data,hora:s.hora,eqId:s.equipamento_id,litros:s.litros,horimetro:s.horimetro,operador:s.operador,obs:s.obs})),
-  };
-  return {viagens:viagensNorm,levantamento:levObj,monitoramento:monNorm,gases:gasNorm,revolvimento:revObj,bioinsumos:bioObj,aplinsumos:aplObj,painel:painelObj,colheita:colheitaObj,taxas:taxasObj,combustivel:combObj};
-}
-
-// Salva estado completo do CD no Supabase (usado por saveCiclo)
-async function _salvarCicloSB(){
-  if(!CD||!CD.id)return;
-  _updateLastSavedLabel();
-  // Ciclo básico já existe - apenas marcar timestamp
-  await _sb.from("ciclos").update({updated_at:new Date().toISOString()}).eq("id",CD.id);
-}
-
-function saveCiclo(){ _updateLastSavedLabel(); }
-function saveState(){ _updateLastSavedLabel(); }
+function loadCiclo(id){return CD&&CD.id===id?CD:null;}
+function saveCiclo(){_updateLastSavedLabel();}
 function _updateLastSavedLabel(){
   const el=document.getElementById("lastSavedLabel");
-  if(el){const now=new Date();el.textContent="Sincronizado: "+now.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});}
+  if(!el)return;
+  const now=new Date();
+  el.textContent="Salvo: "+now.toLocaleTimeString("pt-BR",{hour:"2-digit",minute:"2-digit"});
 }
+function saveState(){_updateLastSavedLabel();}
 
-// listCiclos e loadCiclo agora são async via Supabase
-// (versões síncronas stub para compatibilidade)
-function listCiclos(){ return CD?[CD]:[]; }
-function loadCiclo(id){ return CD&&CD.id===id?CD:null; }
+function listCiclos(){return CD?[CD]:[];}
 
 function leiraKey(p,l){return p+"|"+l;}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,7);}
@@ -512,9 +439,63 @@ const STATE = new Proxy({},{
 //  AUTH / ROLES
 // ═══════════════════════════════════════════════════════════════
 const ROLE_DEFS = {
-  master:   {label:"Usuário Master", pages:["ciclos","usuarios","ficha","viagens","levantamento","enriquecimento","aplinsumos","bioinsumos","monitoramento","revolvimento","gases","colheita","taxas","relatorio","painel","combustivel"]},
-  usuario:  {label:"Usuário",        pages:[]},
+  master:  {label:"Usuário Master",   pages:["ciclos","usuarios","ficha","viagens","levantamento","enriquecimento","aplinsumos","bioinsumos","monitoramento","revolvimento","gases","colheita","taxas","relatorio","painel","combustivel"]},
+  user01:  {label:"Usuário 01",       pages:["viagens","monitoramento"]},
+  user02:  {label:"Usuário 02",       pages:["enriquecimento","aplinsumos"]},
+  user03:  {label:"Usuário 03",       pages:["bioinsumos"]},
+  user04:  {label:"Usuário 04",       pages:["revolvimento"]},
+  user05:  {label:"Usuário 05",       pages:["levantamento","relatorio","ficha"]},
 };
+
+
+// ── SUPABASE ─────────────────────────────────────────────────
+const _sb = supabase.createClient("https://jcgvrmfwimxjgwouilik.supabase.co", "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImpjZ3ZybWZ3aW14amd3b3VpbGlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE3OTY4ODEsImV4cCI6MjA5NzM3Mjg4MX0.4hVK3hLNLPc5YrhpGE3ZP-85cYjFHapNfmfO0uhbKdg");
+
+async function _carregarDadosCiclo(cicloId){
+  const [
+    {data:viagens},{data:levRows},{data:monitoramento},{data:gases},
+    {data:revRows},{data:bioRows},{data:aplRows},{data:painelRows},
+    {data:colheitaRows},{data:taxasRows},{data:equips},
+    {data:combEnt},{data:combSai}
+  ] = await Promise.all([
+    _sb.from("viagens").select("*").eq("ciclo_id",cicloId),
+    _sb.from("levantamento").select("*").eq("ciclo_id",cicloId),
+    _sb.from("monitoramento").select("*").eq("ciclo_id",cicloId),
+    _sb.from("gases").select("*").eq("ciclo_id",cicloId),
+    _sb.from("revolvimento").select("*").eq("ciclo_id",cicloId),
+    _sb.from("bioinsumos").select("*").eq("ciclo_id",cicloId),
+    _sb.from("aplinsumos").select("*").eq("ciclo_id",cicloId),
+    _sb.from("painel").select("*").eq("ciclo_id",cicloId),
+    _sb.from("colheita").select("*").eq("ciclo_id",cicloId),
+    _sb.from("taxas").select("*").eq("ciclo_id",cicloId),
+    _sb.from("equipamentos").select("*").eq("ciclo_id",cicloId),
+    _sb.from("comb_entradas").select("*").eq("ciclo_id",cicloId),
+    _sb.from("comb_saidas").select("*").eq("ciclo_id",cicloId),
+  ]);
+  const levObj={};
+  (levRows||[]).forEach(r=>{levObj[leiraKey(r.patio,r.leira)]={dataInicio:r.data_inicio,supervisor:r.supervisor,obs:r.obs,_id:r.id};});
+  const revObj={};
+  (revRows||[]).forEach(r=>{const k=leiraKey(r.patio,r.leira);if(!revObj[k])revObj[k]={entries:[]};revObj[k].entries.push({data:r.data,operador:r.operador,_id:r.id});});
+  const bioObj={};
+  (bioRows||[]).forEach(r=>{const k=leiraKey(r.patio,r.leira);if(!bioObj[k])bioObj[k]={};bioObj[k][r.bio_key]={data:r.data,forma:r.forma,obs:r.obs,_id:r.id};});
+  const aplObj={};
+  (aplRows||[]).forEach(r=>{aplObj[leiraKey(r.patio,r.leira)]={data:r.data,camaFrango:r.cama_frango,fosfatoNatural:r.fosfato_natural,ureia:r.ureia,kcl:r.kcl,map:r.map,outrosInsumos:r.outros_insumos,responsavel:r.responsavel,obs:r.obs,_id:r.id};});
+  const painelObj={};
+  (painelRows||[]).forEach(r=>{painelObj[leiraKey(r.patio,r.leira)]={etapas:{levantamento:r.etapa_levantamento,enriquecimento:r.etapa_enriquecimento,insumos:r.etapa_insumos,monitoramento:r.etapa_monitoramento,gases:r.etapa_gases,revolvimento:r.etapa_revolvimento},gerente:r.gerente,_id:r.id};});
+  const colheitaObj={};
+  (colheitaRows||[]).forEach(r=>{colheitaObj[leiraKey(r.patio,r.leira)]={peso:r.peso,data:r.data,responsavel:r.responsavel,obs:r.obs,_id:r.id};});
+  const taxasObj=JSON.parse(JSON.stringify(TAXAS_DEFAULT));
+  (taxasRows||[]).forEach(r=>{if(taxasObj[r.chave]){taxasObj[r.chave].taxa=parseFloat(r.taxa)||0;if(r.umidade!=null)taxasObj[r.chave].umidade=parseFloat(r.umidade);}});
+  const viagensNorm=(viagens||[]).map(v=>{return{id:v.id,patio:v.patio,leira:v.leira,data:v.data,hora:v.hora,placa:v.placa,ticket:v.ticket,fornecedor:v.fornecedor,tipoMP:v.tipo_mp,pesoBruto:v.peso_bruto,umidade:v.umidade,nome:v.nome};});
+  const monNorm=(monitoramento||[]).map(m=>{return{id:m.id,patio:m.patio,leira:m.leira,data:m.data,p1:m.p1,p2:m.p2,p3:m.p3,p4:m.p4,ph:m.ph,umidade:m.umidade,aditivacao:m.aditivacao};});
+  const gasNorm=(gases||[]).map(g=>{return{id:g.id,patio:g.patio,leira:g.leira,data:g.data,co2a:g.co2a,co2b:g.co2b,co2c:g.co2c,o2:g.o2,co:g.co,ch4:g.ch4,h2s:g.h2s,nh3:g.nh3,atividade:g.atividade,recomendacao:g.recomendacao,diasProduto:g.dias_produto};});
+  const combObj={
+    equipamentos:(equips||[]).map(e=>{return{id:e.id,nome:e.nome,tipo:e.tipo,placa:e.placa,obs:e.obs};}),
+    entradas:(combEnt||[]).map(e=>{return{id:e.id,data:e.data,litros:e.litros,fornecedor:e.fornecedor,nota:e.nota,obs:e.obs};}),
+    saidas:(combSai||[]).map(s=>{return{id:s.id,data:s.data,hora:s.hora,eqId:s.equipamento_id,litros:s.litros,horimetro:s.horimetro,operador:s.operador,obs:s.obs};})
+  };
+  return {viagens:viagensNorm,levantamento:levObj,monitoramento:monNorm,gases:gasNorm,revolvimento:revObj,bioinsumos:bioObj,aplinsumos:aplObj,painel:painelObj,colheita:colheitaObj,taxas:taxasObj,combustivel:combObj};
+}
 
 const Auth = {
   login(){
@@ -522,19 +503,22 @@ const Auth = {
     const senha=document.getElementById("loginPass").value;
     if(!user||!senha){document.getElementById("loginErr").textContent="Preencha usuário e senha.";return;}
     document.getElementById("loginErr").textContent="Verificando...";
-    _sb.from("usuarios").select("*")
-    .then(({data,error})=>{
+    _sb.from("usuarios").select("*").then(({data,error})=>{
       if(error){document.getElementById("loginErr").textContent="Erro: "+error.message;return;}
-      const row=data&&data.find(u=>u.username===user&&u.senha===senha&&u.ativo!==false);
+      const row=data&&data.find(u=>u.login===user&&u.senha===senha&&u.ativo!==false);
       if(!row){document.getElementById("loginErr").textContent="Usuário ou senha incorretos.";return;}
-      const found={id:row.id,user:row.username,senha:row.senha,role:row.role,customPages:null};
+      const found={id:row.id,user:row.login,senha:row.senha,role:row.perfil,customPages:row.custom_pages||null};
       META.currentUser=found;saveMeta();
       document.getElementById("loginErr").textContent="";
       document.getElementById("loginScreen").style.display="none";
       document.getElementById("appShell").style.display="block";
       App.init();
-    }).catch(err=>{
-      document.getElementById("loginErr").textContent="Erro de conexão: "+(err.message||"verifique a internet");
+      App._showSpinner("Carregando dados...");
+      _sb.from("ciclos").select("*").eq("status","ativo").order("criado_em",{ascending:false}).limit(1).then(({data:ciclos})=>{
+        App._hideSpinner();
+        if(ciclos&&ciclos.length>0){Ciclos.switchTo(ciclos[0].id,ciclos[0]);}
+        else{App.navigate("ciclos");}
+      });
     });
   },
   logout(){
@@ -544,18 +528,18 @@ const Auth = {
     document.getElementById("loginUser").value="";
     document.getElementById("loginPass").value="";
   },
-  canAccess(p){const u=META.currentUser;if(!u)return false;if(u.role==="master")return true;const pages=u.customPages||[];return pages.includes(p);},
-  defaultPage(){const u=META.currentUser;if(!u)return"viagens";if(u.role==="master")return"ciclos";const pages=u.customPages||[];return pages.length?pages[0]:"ciclos";},
+  canAccess(p){const u=META.currentUser;if(!u)return false;const pages=u.customPages||(ROLE_DEFS[u.role]||{}).pages||[];return pages.includes(p);},
+  defaultPage(){const u=META.currentUser;if(!u)return"viagens";const pages=u.customPages||(ROLE_DEFS[u.role]||{}).pages||[];return pages.length?pages[0]:"viagens";},
 };
 
 // ═══════════════════════════════════════════════════════════════
 //  GESTÃO DE CICLOS
 // ═══════════════════════════════════════════════════════════════
 const Ciclos = {
-  async criar(nome, descricao, dataInicio){
+  async criar(nome,descricao,dataInicio){
     App._showSpinner("Criando ciclo...");
     try{
-      const {data,error}=await _sb.from("ciclos").insert({nome,descricao:descricao||"",data_inicio:dataInicio||null,status:"ativo",criado_em:new Date().toISOString()}).select().single();
+      const {data,error}=await _sb.from("ciclos").insert({codigo:nome,descricao:descricao||"",data_inicio:dataInicio||null,status:"ativo",criado_em:new Date().toISOString()}).select().single();
       if(error)throw error;
       await this.switchTo(data.id,data);
       App.toast("Ciclo '"+nome+"' criado!");
@@ -568,51 +552,35 @@ const Ciclos = {
       if(!info){const{data}=await _sb.from("ciclos").select("*").eq("id",id).single();info=data;}
       if(!info){App.toast("Ciclo não encontrado","err");return;}
       const dados=await _carregarDadosCiclo(id);
-      CD={id,nome:info.nome,descricao:info.descricao,status:info.status,dataInicio:info.data_inicio,...dados};
+      CD={id,nome:info.codigo||info.nome,descricao:info.descricao,status:info.status,dataInicio:info.data_inicio,...dados};
       META.cicloAtivo=id;saveMeta();
       this.updateSidebar();
-      const _badge=document.getElementById("cicloBadge");if(_badge)_badge.textContent=CD.nome;
-      // Realtime
-      this._subscribe(id);
-      // Force navigation to default page
+      const b=document.getElementById("cicloBadge");if(b)b.textContent=CD.nome;
       setTimeout(()=>App.navigate(Auth.defaultPage()),100);
     }catch(e){App.toast("Erro ao carregar: "+e.message,"err");console.error(e);}finally{App._hideSpinner();}
-  },
-  _subscribe(cicloId){
-    if(this._channel){_sb.removeChannel(this._channel);}
-    this._channel=_sb.channel("ciclo-"+cicloId)
-      .on("postgres_changes",{event:"*",schema:"public",filter:"ciclo_id=eq."+cicloId},async()=>{
-        if(!CD||CD.id!==cicloId)return;
-        const dados=await _carregarDadosCiclo(cicloId);
-        Object.assign(CD,dados);
-        App.refresh();
-        _updateLastSavedLabel();
-      }).subscribe();
   },
   async updateSidebar(){
     try{
       const{data:ciclos}=await _sb.from("ciclos").select("*").order("criado_em",{ascending:false});
-      const sel=document.getElementById("sidebarCicloSel");
-      if(!sel)return;
-      sel.innerHTML=(ciclos||[]).map(c=>`<option value="${c.id}" ${META.cicloAtivo===c.id?"selected":""}>${c.nome}${c.status==="encerrado"?" ✓":c.status==="arquivado"?" 📦":""}</option>`).join("")||`<option value="">— nenhum ciclo —</option>`;
+      const sel=document.getElementById("sidebarCicloSel");if(!sel)return;
+      sel.innerHTML=(ciclos||[]).map(c=>`<option value="${c.id}" ${META.cicloAtivo===c.id?"selected":""}>${c.codigo||c.codigo||c.nome}${c.status==="encerrado"?" ✓":c.status==="arquivado"?" 📦":""}</option>`).join("")||`<option value="">— nenhum ciclo —</option>`;
     }catch(e){console.error(e);}
   },
   async encerrar(id){
-    const{data:c}=await _sb.from("ciclos").select("nome").eq("id",id).single();
-    if(!confirm(`Encerrar "${c.nome}"?`))return;
+    const{data:c}=await _sb.from("ciclos").select("codigo").eq("id",id).single();
+    if(!confirm(`Encerrar "${c.codigo}"?`))return;
     await _sb.from("ciclos").update({status:"encerrado",data_fim:todayISO()}).eq("id",id);
-    if(CD&&CD.id===id)CD.status="encerrado";
-    App.toast("Ciclo encerrado.");App.navigate("ciclos");
+    App.toast("Encerrado.");App.navigate("ciclos");
   },
   async arquivar(id){
-    const{data:c}=await _sb.from("ciclos").select("nome").eq("id",id).single();
-    if(!confirm(`Arquivar "${c.nome}"?`))return;
+    const{data:c}=await _sb.from("ciclos").select("codigo").eq("id",id).single();
+    if(!confirm(`Arquivar "${c.codigo}"?`))return;
     await _sb.from("ciclos").update({status:"arquivado"}).eq("id",id);
     App.toast("Arquivado.");App.navigate("ciclos");
   },
   async excluir(id){
-    const{data:c}=await _sb.from("ciclos").select("nome").eq("id",id).single();
-    if(!confirm(`EXCLUIR permanentemente "${c.nome}"?\nTodos os dados serão perdidos!`))return;
+    const{data:c}=await _sb.from("ciclos").select("codigo").eq("id",id).single();
+    if(!confirm(`EXCLUIR permanentemente "${c.codigo}"?\nTodos os dados serão perdidos!`))return;
     await _sb.from("ciclos").delete().eq("id",id);
     if(META.cicloAtivo===id){META.cicloAtivo=null;CD=null;saveMeta();}
     App.toast("Excluído.");App.navigate("ciclos");
@@ -624,7 +592,7 @@ const Ciclos = {
     a.href=u;a.download="backup_"+CD.nome.replace(/\s/g,"_")+"_"+todayISO()+".json";
     a.click();URL.revokeObjectURL(u);App.toast("Backup exportado!");
   },
-  importarBackup(){App.toast("Use o botão de backup para exportar/importar ciclos","info");},
+  importarBackup(){App.toast("Importe via Ciclos de Produção","info");}
 };
 
 // ═══════════════════════════════════════════════════════════════
@@ -731,10 +699,7 @@ let currentPage = "";
 
 const App = {
   init(){
-    // Carregar usuários do Supabase
-    _sb.from("usuarios").select("*").then(({data})=>{
-      if(data)META.users=data.map(u=>({id:u.id,user:u.username,senha:u.senha,role:u.role,customPages:null,ativo:u.ativo}));
-    });
+    _sb.from("usuarios").select("*").then(({data})=>{if(data)META.users=data.map(u=>({id:u.id,user:u.login,senha:u.senha,role:u.perfil,customPages:u.custom_pages||null,ativo:u.ativo}));});
     this.buildNav();this.updateSidebarUser();Ciclos.updateSidebar();
     const badge=document.getElementById("cicloBadge");
     badge.textContent=CD?CD.nome:"— sem ciclo —";
@@ -792,8 +757,8 @@ const App = {
   openModal(id){document.getElementById(id).classList.add("open");},
   closeModal(id){document.getElementById(id).classList.remove("open");},
   refresh(){this.navigate(currentPage);},
-  _showSpinner(msg){let el=document.getElementById('_spinner');if(!el){el=document.createElement('div');el.id='_spinner';el.style.cssText='position:fixed;inset:0;background:rgba(27,67,50,.75);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;gap:14px;font-family:var(--font-body)';el.innerHTML='<div style="width:44px;height:44px;border:4px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite"></div><div id="_spinMsg" style="font-size:14px">'+msg+'</div>';document.body.appendChild(el);}else{document.getElementById('_spinMsg').textContent=msg;}},
-  _hideSpinner(){const el=document.getElementById('_spinner');if(el)el.remove();},
+  _showSpinner(msg){let el=document.getElementById("_sp");if(!el){el=document.createElement("div");el.id="_sp";el.style.cssText="position:fixed;inset:0;background:rgba(27,67,50,.75);z-index:9999;display:flex;flex-direction:column;align-items:center;justify-content:center;color:#fff;gap:14px";el.innerHTML='<div style="width:44px;height:44px;border:4px solid rgba(255,255,255,.3);border-top-color:#fff;border-radius:50%;animation:spin .8s linear infinite"></div><div id="_spm" style="font-size:14px">'+msg+"</div>";document.body.appendChild(el);}else{document.getElementById("_spm").textContent=msg;}},
+  _hideSpinner(){const el=document.getElementById("_sp");if(el)el.remove();},
   _importHandler(e){const f=e.target.files[0];if(!f)return;const r=new FileReader();r.onload=ev=>{try{const d=JSON.parse(ev.target.result);if(d.meta_export&&d.ciclo){Ciclos.importarBackup();return;}App.toast("Use 'Restaurar backup' para importar","err");}catch(err){App.toast("Erro ao ler arquivo","err");}};r.readAsText(f);e.target.value="";},
 };
 document.addEventListener("click",e=>{if(e.target.classList.contains("modal-bg"))e.target.classList.remove("open");});
@@ -829,7 +794,7 @@ Pages.ciclos = function(el){
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;margin-bottom:8px">
         <div>
           <span class="status-dot"></span>
-          <span class="name">${c.nome}</span>
+          <span class="name">${c.codigo||c.nome}</span>
           ${META.cicloAtivo===c.id?`<span class="badge bl" style="font-size:10px;margin-left:6px">ATIVO</span>`:""}
         </div>
         <span class="badge ${statusCls[c.status]||"bc"}">${statusLabel[c.status]||c.status}</span>
@@ -841,7 +806,7 @@ Pages.ciclos = function(el){
         <span><i class="ti ti-stack-2" style="color:var(--verde)"></i> ${c.nLeiras} leiras · ${c.nViagens} viagens</span>
       </div>
       <div class="actions">
-        ${META.cicloAtivo!==c.id?`<button class="btn btn-sm btn-primary" onclick="Ciclos.switchTo('${c.id}').then(()=>App.navigate(Auth.defaultPage()))"><i class="ti ti-toggle-right"></i> Ativar</button>`:`<span class="badge bl">Ciclo ativo</span>`}
+        ${META.cicloAtivo!==c.id?`<button class="btn btn-sm btn-primary" onclick="Ciclos.switchTo('${c.id}')"><i class="ti ti-toggle-right"></i> Ativar</button>`:`<span class="badge bl">Ciclo ativo</span>`}
         <button class="btn btn-sm" onclick="Pages._editCiclo('${c.id}')"><i class="ti ti-pencil"></i> Editar</button>
         <button class="btn btn-sm" onclick="Pages._exportCiclo('${c.id}')"><i class="ti ti-download"></i> Backup</button>
         ${c.status==="ativo"?`<button class="btn btn-sm" onclick="Ciclos.encerrar('${c.id}')"><i class="ti ti-flag"></i> Encerrar</button>`:""}
@@ -887,7 +852,7 @@ Pages._novoCiclo=function(){
 Pages._editCiclo=function(id){
   const c=loadCiclo(id);if(!c)return;
   document.getElementById("ciclo-id").value=c.id;
-  document.getElementById("ciclo-nome").value=c.nome;
+  document.getElementById("ciclo-nome").value=c.codigo||c.nome;
   document.getElementById("ciclo-desc").value=c.descricao||"";
   document.getElementById("ciclo-inicio").value=c.dataInicio||"";
   document.getElementById("ciclo-fim").value=c.dataFim||"";
@@ -899,13 +864,24 @@ Pages._salvarCiclo=async function(){
   const desc=document.getElementById("ciclo-desc").value.trim();
   const ini=document.getElementById("ciclo-inicio").value;
   const fim=document.getElementById("ciclo-fim").value;
-  if(!nome){App.toast("Informe o nome do ciclo","err");return;}try{if(id){await _sb.from("ciclos").update({nome,descricao:desc,data_inicio:ini||null,data_fim:fim||null}).eq("id",id);if(CD&&CD.id===id){CD.nome=nome;document.getElementById("cicloBadge").textContent=nome;}App.toast("Ciclo atualizado!");}else{await Ciclos.criar(nome,desc,ini);}await Ciclos.updateSidebar();App.closeModal("modal-ciclo");App.navigate("ciclos");}catch(e){App.toast("Erro: "+e.message,"err");}
+  if(!nome){App.toast("Informe o nome do ciclo","err");return;}
+  if(id){
+    const c=loadCiclo(id);if(!c)return;
+    c.codigo||c.nome=nome;c.descricao=desc;c.dataInicio=ini||c.dataInicio;c.dataFim=fim||null;
+    localStorage.setItem(cicloStorageKey(id),JSON.stringify(c));
+    if(META.cicloAtivo===id)CD=c;
+    App.toast("Ciclo atualizado!");
+  } else {
+    Ciclos.criar(nome,desc,ini);
+  }
+  saveMeta();Ciclos.updateSidebar();
+  App.closeModal("modal-ciclo");App.navigate("ciclos");
 };
 Pages._exportCiclo=function(id){
   const c=loadCiclo(id);if(!c)return;
   const blob=new Blob([JSON.stringify({meta_export:true,ciclo:c},null,2)],{type:"application/json"});
   const u=URL.createObjectURL(blob);const a=document.createElement("a");
-  a.href=u;a.download="backup_"+c.nome.replace(/\s/g,"_")+"_"+todayISO()+".json";
+  a.href=u;a.download="backup_"+c.codigo||c.nome.replace(/\s/g,"_")+"_"+todayISO()+".json";
   a.click();URL.revokeObjectURL(u);App.toast("Backup exportado!");
 };
 
@@ -913,9 +889,9 @@ Pages._exportCiclo=function(id){
 /* ── USUÁRIOS ── */
 Pages.usuarios = function(el){
   const cards=META.users.map(u=>{
-    const rd=ROLE_DEFS[u.role]||ROLE_DEFS["usuario"]||{};
-    const effPages=u.customPages||[];
-    const isCustom=true;
+    const rd=ROLE_DEFS[u.role]||{};
+    const effPages=u.customPages||(rd.pages||[]);
+    const isCustom=!!u.customPages;
     const perms=effPages.map(p=>{const def=PAGE_DEFS.find(d=>d.id===p);return def?`<span class="badge ${isCustom?"bl":"bc"}" style="font-size:10px">${def.label}</span>`:""}).join("");
     return`<div class="user-card">
       <div class="user-card-head">
@@ -938,39 +914,37 @@ Pages.usuarios = function(el){
   </div>`;
   _modal("modal-user","Usuário","ti-user",`
     <input type="hidden" id="usr-id"/>
-    <input type="hidden" id="usr-role" value="usuario"/>
-    <div class="field"><label>Nome de usuário</label><input id="usr-user" placeholder="nome do usuário"/></div>
-    <div class="field"><label>Senha <span id="usr-senha-hint" style="font-size:10px;color:var(--ink-soft)"></span></label>
-      <input type="password" id="usr-senha" placeholder="Mínimo 4 caracteres"/>
+    <div class="field"><label>Nome de usuário</label><input id="usr-user" placeholder="usuario01"/></div>
+    <div class="field"><label>Senha</label><input type="password" id="usr-senha" placeholder="Mínimo 4 caracteres"/></div>
+    <div class="field"><label>Perfil base</label>
+      <select id="usr-role" onchange="Pages._onRoleChange()">
+        ${Object.entries(ROLE_DEFS).map(([k,v])=>`<option value="${k}">${v.label}</option>`).join("")}
+      </select>
+      <div style="font-size:11px;color:var(--ink-soft);margin-top:3px">Selecione um perfil base — depois personalize as páginas abaixo</div>
     </div>
     <div class="field">
-      <label>Módulos que este usuário pode acessar</label>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px 16px;margin-top:8px;padding:12px;border:1.5px solid var(--linha);border-radius:8px;max-height:220px;overflow-y:auto">
-        ${PAGE_DEFS.filter(p=>p.id!=="usuarios"&&p.id!=="ciclos").map(p=>`<label style="display:flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;padding:3px 0">
-          <input type="checkbox" class="usr-page-cb" value="${p.id}" style="width:15px;height:15px;accent-color:var(--laranja);cursor:pointer"/> ${p.label}
+      <label>Páginas permitidas <span style="font-size:10px;color:var(--ink-soft)">(personalize para este usuário)</span></label>
+      <div id="usr-pages-check" style="display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;margin-top:6px;max-height:200px;overflow-y:auto;padding:10px;border:1.5px solid var(--linha);border-radius:8px">
+        ${PAGE_DEFS.map(p=>`<label style="display:flex;align-items:center;gap:6px;font-size:12.5px;cursor:pointer;padding:2px 0">
+          <input type="checkbox" class="usr-page-cb" value="${p.id}" style="width:14px;height:14px;accent-color:var(--laranja)"/> ${p.label}
         </label>`).join("")}
       </div>
-      <div style="font-size:11px;color:var(--ink-soft);margin-top:4px">Ciclos de Produção e Cadastro de Usuários são exclusivos do Master.</div>
     </div>`,()=>Pages._saveUser());
 };
 Pages._newUser=function(){
   document.getElementById("usr-id").value="";
   document.getElementById("usr-user").value="";
   document.getElementById("usr-senha").value="";
-  document.getElementById("usr-senha-hint").textContent="";
-  document.getElementById("usr-senha").placeholder="Mínimo 4 caracteres";
-  // Uncheck all pages
-  setTimeout(()=>{document.querySelectorAll(".usr-page-cb").forEach(cb=>cb.checked=false);},50);
+  document.getElementById("usr-role").value="user01";
+  Pages._onRoleChange();
   App.openModal("modal-user");
 };
 Pages._editUser=function(id){
   const u=META.users.find(x=>String(x.id)===String(id));if(!u)return;
   document.getElementById("usr-id").value=u.id;
   document.getElementById("usr-user").value=u.user;
-  document.getElementById("usr-senha").value="";
-  document.getElementById("usr-senha").placeholder="Deixe vazio para manter a senha atual";
-  document.getElementById("usr-senha-hint").textContent="(deixe vazio para manter a senha atual)";
-  document.getElementById("usr-role").value=u.role||"usuario";
+  document.getElementById("usr-senha").value="";document.getElementById("usr-senha").placeholder="Deixe vazio para manter";
+  document.getElementById("usr-role").value=u.role||"user01";
   // Populate checkboxes from user's custom pages (or role default)
   setTimeout(()=>{
     const pages=u.customPages||(ROLE_DEFS[u.role]||{}).pages||[];
@@ -980,35 +954,36 @@ Pages._editUser=function(id){
   },50);
   App.openModal("modal-user");
 };
-Pages._saveUser=function(){
-  const id=document.getElementById("usr-id").value;
-  const user=document.getElementById("usr-user").value.trim();
-  const senhaField=document.getElementById("usr-senha").value.trim();
+Pages._onRoleChange=function(){
   const role=document.getElementById("usr-role").value;
-  if(!user){App.toast("Preencha o nome de usuário","err");return;}
-  // Build update row - only include senha if it was changed
-  const actualRole=META.currentUser&&META.currentUser.role==="master"&&user==="master"?"master":"usuario";
-  const urow={username:user,role:actualRole,ativo:true};
-  if(senhaField&&!senhaField.startsWith("•")){
-    if(senhaField.length<4){App.toast("Senha mínima de 4 caracteres","err");return;}
-    urow.senha=senhaField;
-  }
+  const defaultPages=(ROLE_DEFS[role]||{}).pages||[];
+  document.querySelectorAll(".usr-page-cb").forEach(cb=>{
+    cb.checked=defaultPages.includes(cb.value);
+  });
+};
+
+Pages._saveUser=async function(){
+  const id=document.getElementById("usr-id").value;const user=document.getElementById("usr-user").value.trim();const senha=document.getElementById("usr-senha").value.trim();const role=document.getElementById("usr-role").value;
+  if(!user||!senha){App.toast("Preencha usuário e senha","err");return;}
+  if(senha.length<4){App.toast("Senha mínima de 4 caracteres","err");return;}
+  const customPages=Array.from(document.querySelectorAll(".usr-page-cb:checked")).map(cb=>cb.value);
+  const isEditingMaster=id&&META.users.find(x=>String(x.id)===String(id)&&x.role==="master");
+  const actualRole=isEditingMaster?"master":"usuario";
+  const urow={login:user,perfil:actualRole,ativo:true};
+  if(senhaField&&!senhaField.startsWith("•")){if(senhaField.length<4){App.toast("Senha mínima de 4 caracteres","err");return;}urow.senha=senhaField;}
   if(id){
-    // Editing existing user
-    _sb.from("usuarios").update(urow).eq("id",id).then(({error})=>{
-      if(error){App.toast("Erro ao salvar: "+error.message,"err");return;}
-      _sb.from("usuarios").select("*").then(({data})=>{
-        if(data)META.users=data.map(u=>({id:u.id,user:u.username,senha:u.senha,role:u.role,customPages:null,ativo:u.ativo}));
-        App.closeModal("modal-user");App.navigate("usuarios");App.toast("Usuário atualizado!");
-      });
+    const updateRow={...urow,custom_pages:customPages};
+    _sb.from("usuarios").update(updateRow).eq("id",id).then(({error})=>{
+      if(error){App.toast("Erro: "+error.message,"err");return;}
+      const u=META.users.find(x=>String(x.id)===String(id));
+      if(u){u.user=user;u.role=actualRole;u.customPages=customPages;}
+      App.closeModal("modal-user");App.navigate("usuarios");App.toast("Usuário atualizado!");
     });
   } else {
-    // New user - senha required
     if(!senhaField||senhaField.length<4){App.toast("Senha mínima de 4 caracteres","err");return;}
-    urow.senha=senhaField;
-    _sb.from("usuarios").insert(urow).select().single().then(({data:d,error})=>{
-      if(error){App.toast("Erro ao criar: "+error.message,"err");return;}
-      META.users.push({id:d.id,user,senha:senhaField,role,customPages:null});
+    _sb.from("usuarios").insert({...urow,custom_pages:customPages}).select().single().then(({data:d,error})=>{
+      if(error){App.toast("Erro: "+error.message,"err");return;}
+      META.users.push({id:d.id,user,senha:senhaField,role:actualRole,customPages});
       App.closeModal("modal-user");App.navigate("usuarios");App.toast("Usuário criado!");
     });
   }
@@ -1130,17 +1105,7 @@ Pages.ficha = function(el){
       scales:{y:{title:{display:true,text:"°C"},min:0,max:100},y2:{position:"right",title:{display:true,text:"%"},min:0,max:100,grid:{display:false}}}}});
   });
 };
-Pages._toggleEtapa=function(p,l,k){
-  const key=leiraKey(p,l);
-  if(!CD.painel[key])CD.painel[key]={};
-  if(!CD.painel[key].etapas)CD.painel[key].etapas={};
-  CD.painel[key].etapas[k]=!CD.painel[key].etapas[k];
-  const et=CD.painel[key].etapas;
-  const prow={ciclo_id:CD.id,patio:p,leira:l,etapa_levantamento:!!et.levantamento,etapa_enriquecimento:!!et.enriquecimento,etapa_insumos:!!et.insumos,etapa_monitoramento:!!et.monitoramento,etapa_gases:!!et.gases,etapa_revolvimento:!!et.revolvimento};
-  if(CD.painel[key]._id){_sb.from("painel").update(prow).eq("id",CD.painel[key]._id).then();}
-  else{_sb.from("painel").upsert({...prow},{onConflict:"ciclo_id,patio,leira"}).select().single().then(({data:d})=>{if(d)CD.painel[key]._id=d.id;});}
-  App.navigate("ficha");
-};
+Pages._toggleEtapa=function(p,l,k){const key=leiraKey(p,l);if(!CD.painel[key])CD.painel[key]={etapas:{}};if(!CD.painel[key].etapas)CD.painel[key].etapas={};CD.painel[key].etapas[k]=!CD.painel[key].etapas[k];const et=CD.painel[key].etapas;const prow={ciclo_id:CD.id,patio:p,leira:l,etapa_levantamento:!!et.levantamento,etapa_enriquecimento:!!et.enriquecimento,etapa_insumos:!!et.insumos,etapa_monitoramento:!!et.monitoramento,etapa_gases:!!et.gases,etapa_revolvimento:!!et.revolvimento};if(CD.painel[key]._id){_sb.from("painel").update(prow).eq("id",CD.painel[key]._id).then();}else{_sb.from("painel").upsert({...prow},{onConflict:"ciclo_id,patio,leira"}).select().single().then(({data:d})=>{if(d)CD.painel[key]._id=d.id;});}App.navigate("ficha");};
 
 /* ── VIAGENS ── */
 Pages.viagens = function(el){
@@ -1178,7 +1143,7 @@ Pages._saveV=function(){
     fornecedor:document.getElementById("vg-fo").value,tipoMP:document.getElementById("vg-tp").value,
     pesoBruto:document.getElementById("vg-pb").value,umidade:document.getElementById("vg-um").value};
   if(!v.data||!v.pesoBruto){App.toast("Informe data e peso","err");return;}
-  _sb.from("viagens").insert({ciclo_id:CD.id,patio:v.patio,leira:v.leira,data:v.data,hora:v.hora||null,placa:v.placa,ticket:v.ticket,fornecedor:v.fornecedor,tipo_mp:v.tipoMP,peso_bruto:parseFloat(v.pesoBruto)||0,umidade:parseFloat(v.umidade)||0,nome:v.nome||null}).select().single().then(({data:d,error})=>{if(error){App.toast("Erro: "+error.message,"err");return;}v.id=d.id;STATE.viagens.push(v);App.closeModal("modal-v");App.navigate("viagens");App.toast("Viagem registrada!");});
+  _sb.from("viagens").insert({ciclo_id:CD.id,patio:v.patio,leira:v.leira,data:v.data,hora:v.hora||null,placa:v.placa,ticket:v.ticket,fornecedor:v.fornecedor,tipo_mp:v.tipoMP,peso_bruto:parseFloat(v.pesoBruto)||0,umidade:parseFloat(v.umidade)||0,nome:v.nome||null}).select().single().then(({data:d,error})=>{if(error){App.toast("Erro: "+error.message,"err");return;}v.id=d.id;CD.viagens.push(v);App.closeModal("modal-v");App.navigate("viagens");App.toast("Viagem registrada!");});
 };
 Pages._delV=function(id){if(!confirm("Remover?"))return;_sb.from("viagens").delete().eq("id",id).then(()=>{CD.viagens=CD.viagens.filter(v=>v.id!==id);App.navigate("viagens");});};
 
@@ -1207,7 +1172,7 @@ Pages.levantamento = function(el){
     `<div class="empty"><i class="ti ti-scale"></i><div class="title">Sem dados</div><div>Registre viagens primeiro</div></div>`}
   </div>`;
 };
-Pages._saveLev=function(p,l,f,v){const key=leiraKey(p,l);if(!CD.levantamento[key])CD.levantamento[key]={};CD.levantamento[key][f]=v;const rec=CD.levantamento[key];const row={ciclo_id:CD.id,patio:p,leira:l,data_inicio:rec.dataInicio||null,supervisor:rec.supervisor||null,obs:rec.obs||null};if(rec._id){_sb.from("levantamento").update(row).eq("id",rec._id).then();}else{_sb.from("levantamento").upsert({...row},{"onConflict":"ciclo_id,patio,leira"}).select().single().then(({data:d})=>{if(d)CD.levantamento[key]._id=d.id;});}};
+Pages._saveLev=function(p,l,f,v){const key=leiraKey(p,l);if(!CD.levantamento[key])CD.levantamento[key]={};CD.levantamento[key][f]=v;const rec=CD.levantamento[key];const row={ciclo_id:CD.id,patio:p,leira:l,data_inicio:rec.dataInicio||null,supervisor:rec.supervisor||null,obs:rec.obs||null};if(rec._id){_sb.from("levantamento").update(row).eq("id",rec._id).then();}else{_sb.from("levantamento").upsert({...row},{onConflict:"ciclo_id,patio,leira"}).select().single().then(({data:d})=>{if(d)CD.levantamento[key]._id=d.id;});};};
 
 /* ── ENRIQUECIMENTO ── */
 Pages.enriquecimento = function(el){
@@ -1263,7 +1228,7 @@ Pages.aplinsumos = function(el){
       ${macros.map(k=>`<th>${mLabels[k]} (kg)</th>`).join("")}<th>Responsável</th></tr></thead><tbody>${rows}</tbody></table></div>
   </div>`;
 };
-Pages._saveApl=function(p,l,f,v){const key=leiraKey(p,l);if(!CD.aplinsumos[key])CD.aplinsumos[key]={};CD.aplinsumos[key][f]=v;const rec=CD.aplinsumos[key];const row={ciclo_id:CD.id,patio:p,leira:l,data:rec.data||null,cama_frango:parseFloat(rec.camaFrango)||0,fosfato_natural:parseFloat(rec.fosfatoNatural)||0,ureia:parseFloat(rec.ureia)||0,kcl:parseFloat(rec.kcl)||0,map:parseFloat(rec.map)||0,outros_insumos:parseFloat(rec.outrosInsumos)||0,responsavel:rec.responsavel||null};if(rec._id){_sb.from("aplinsumos").update(row).eq("id",rec._id).then();}else{_sb.from("aplinsumos").upsert({...row},{onConflict:"ciclo_id,patio,leira"}).select().single().then(({data:d})=>{if(d)CD.aplinsumos[key]._id=d.id;});}};
+Pages._saveApl=function(p,l,f,v){const key=leiraKey(p,l);if(!CD.aplinsumos[key])CD.aplinsumos[key]={};CD.aplinsumos[key][f]=v;const rec=CD.aplinsumos[key];const row={ciclo_id:CD.id,patio:p,leira:l,data:rec.data||null,cama_frango:parseFloat(rec.camaFrango)||0,fosfato_natural:parseFloat(rec.fosfatoNatural)||0,ureia:parseFloat(rec.ureia)||0,kcl:parseFloat(rec.kcl)||0,map:parseFloat(rec.map)||0,outros_insumos:parseFloat(rec.outrosInsumos)||0,responsavel:rec.responsavel||null};if(rec._id){_sb.from("aplinsumos").update(row).eq("id",rec._id).then();}else{_sb.from("aplinsumos").upsert({...row},{onConflict:"ciclo_id,patio,leira"}).select().single().then(({data:d})=>{if(d)CD.aplinsumos[key]._id=d.id;});};};
 
 /* ── BIOINSUMOS ── */
 Pages.bioinsumos = function(el){
@@ -1595,8 +1560,8 @@ Pages._onUmidSaidaChange=function(val){
   // Save to STATE
   Pages._saveTaxa("umidadeSaida","taxa",dec);
 };
-Pages._saveTaxa=function(k,f,v){if(!CD||!CD.taxas[k])return;CD.taxas[k][f]=parseFloat(v)||0;_sb.from("taxas").upsert({ciclo_id:CD.id,chave:k,taxa:CD.taxas[k].taxa,umidade:CD.taxas[k].umidade!==null?CD.taxas[k].umidade:null},{onConflict:"ciclo_id,chave"}).then();App.toast("Taxa salva!");};
-Pages._resetTaxas=async function(){if(!confirm("Restaurar padrões?"))return;CD.taxas=JSON.parse(JSON.stringify(TAXAS_DEFAULT));for(const[k,t]of Object.entries(CD.taxas)){await _sb.from("taxas").upsert({ciclo_id:CD.id,chave:k,taxa:t.taxa,umidade:t.umidade!==null?t.umidade:null},{onConflict:"ciclo_id,chave"});}App.navigate("taxas");App.toast("Taxas restauradas!");};
+Pages._saveTaxa=function(k,f,v){if(!CD||!CD.taxas[k])return;CD.taxas[k][f]=parseFloat(v)||0;_sb.from("taxas").upsert({ciclo_id:CD.id,chave:k,taxa:CD.taxas[k].taxa,umidade:CD.taxas[k].umidade!=null?CD.taxas[k].umidade:null},{onConflict:"ciclo_id,chave"}).then();App.toast("Taxa salva!");};
+Pages._resetTaxas=async function(){if(!confirm("Restaurar padrões?"))return;CD.taxas=JSON.parse(JSON.stringify(TAXAS_DEFAULT));for(const[k,t]of Object.entries(CD.taxas)){await _sb.from("taxas").upsert({ciclo_id:CD.id,chave:k,taxa:t.taxa,umidade:t.umidade!=null?t.umidade:null},{onConflict:"ciclo_id,chave"});}App.navigate("taxas");App.toast("Taxas restauradas!");};
 
 /* ── RELATÓRIO / PDF ── */
 Pages.relatorio = function(el){
@@ -1885,7 +1850,7 @@ Pages._gerarRelCombustivel=function(){
     const pct=totS>0?c.total/totS:0;
     const bg=i%2===0?"#fff":"#faf8f5";
     return`<tr style="background:${bg}">
-      <td style="padding:7px 10px"><strong>${c.nome}</strong></td>
+      <td style="padding:7px 10px"><strong>${c.codigo||c.nome}</strong></td>
       <td style="padding:7px 10px;color:#888">${c.tipo}</td>
       <td style="padding:7px 10px">${c.placa}</td>
       <td style="padding:7px 10px;text-align:center">${c.n}</td>
@@ -2192,7 +2157,9 @@ Pages._saveEq=function(){
   const nome=document.getElementById("eq-nome").value.trim();
   if(!nome){App.toast("Informe o nome do equipamento","err");return;}
   const data={nome,tipo:document.getElementById("eq-tipo").value,placa:document.getElementById("eq-placa").value,obs:document.getElementById("eq-obs").value};
-  if(id){_sb.from("equipamentos").update(data).eq("id",id).then(({error})=>{if(error){App.toast("Erro: "+error.message,"err");return;}const eq=CD.combustivel.equipamentos.find(e=>String(e.id)===String(id));if(eq)Object.assign(eq,data);App.closeModal("modal-eq");App.navigate("combustivel");App.toast("Equipamento salvo!");});}else{_sb.from("equipamentos").insert({ciclo_id:CD.id,...data}).select().single().then(({data:d,error})=>{if(error){App.toast("Erro: "+error.message,"err");return;}CD.combustivel.equipamentos.push({id:d.id,...data});App.closeModal("modal-eq");App.navigate("combustivel");App.toast("Equipamento salvo!");});}
+  if(id){const eq=CD.combustivel.equipamentos.find(e=>e.id===id);if(eq)Object.assign(eq,data);}
+  else{CD.combustivel.equipamentos.push({id:uid(),...data});}
+  saveCiclo();App.closeModal("modal-eq");App.navigate("combustivel");App.toast("Equipamento salvo!");
 };
 Pages._delEq=function(id){if(!confirm("Remover equipamento?"))return;_sb.from("equipamentos").delete().eq("id",id).then(()=>{CD.combustivel.equipamentos=CD.combustivel.equipamentos.filter(e=>e.id!==id);App.navigate("combustivel");});};
 
@@ -2202,7 +2169,8 @@ Pages._saveEntrada=function(){
   const litros=parseFloat(document.getElementById("ent-litros").value);
   if(!litros||litros<=0){App.toast("Informe a quantidade em litros","err");return;}
   const data=document.getElementById("ent-data").value;if(!data){App.toast("Informe a data","err");return;}
-  _sb.from("comb_entradas").insert({ciclo_id:CD.id,data,litros,fornecedor:document.getElementById("ent-forn").value,nota:document.getElementById("ent-nota").value,obs:document.getElementById("ent-obs").value}).select().single().then(({data:d,error})=>{if(error){App.toast("Erro: "+error.message,"err");return;}CD.combustivel.entradas.push({id:d.id,data,litros,fornecedor:d.fornecedor,nota:d.nota,obs:d.obs});App.closeModal("modal-entrada");App.navigate("combustivel");App.toast("Entrada registrada!");});
+  CD.combustivel.entradas.push({id:uid(),data,litros:litros.toString(),fornecedor:document.getElementById("ent-forn").value,nota:document.getElementById("ent-nota").value,obs:document.getElementById("ent-obs").value});
+  saveCiclo();App.closeModal("modal-entrada");App.navigate("combustivel");App.toast("Entrada registrada! Saldo atualizado.");
 };
 Pages._delEntrada=function(id){if(!confirm("Remover?"))return;_sb.from("comb_entradas").delete().eq("id",id).then(()=>{CD.combustivel.entradas=CD.combustivel.entradas.filter(e=>e.id!==id);App.navigate("combustivel");});};
 
@@ -2213,12 +2181,8 @@ Pages._saveSaida=function(){
   if(!litros||litros<=0){App.toast("Informe a quantidade em litros","err");return;}
   const data=document.getElementById("sai-data").value;if(!data){App.toast("Informe a data","err");return;}
   const eqId=document.getElementById("sai-eq").value;if(!eqId){App.toast("Selecione o equipamento","err");return;}
-  const saiRow={ciclo_id:CD.id,equipamento_id:eqId,data,hora:document.getElementById("sai-hora").value||null,litros,horimetro:parseFloat(document.getElementById("sai-hor").value)||null,operador:document.getElementById("sai-oper").value,obs:document.getElementById("sai-obs").value};
-  _sb.from("comb_saidas").insert(saiRow).select().single().then(({data:d,error})=>{
-    if(error){App.toast("Erro: "+error.message,"err");return;}
-    CD.combustivel.saidas.push({id:d.id,data,hora:d.hora,eqId,litros,horimetro:d.horimetro,operador:d.operador,obs:d.obs});
-    App.closeModal("modal-saida");App.navigate("combustivel");App.toast("Abastecimento registrado!");
-  });
+  CD.combustivel.saidas.push({id:uid(),data,hora:document.getElementById("sai-hora").value,eqId,litros:litros.toString(),horimetro:document.getElementById("sai-hor").value,operador:document.getElementById("sai-oper").value,obs:document.getElementById("sai-obs").value});
+  saveCiclo();App.closeModal("modal-saida");App.navigate("combustivel");App.toast("Abastecimento registrado!");
 };
 Pages._delSaida=function(id){if(!confirm("Remover?"))return;_sb.from("comb_saidas").delete().eq("id",id).then(()=>{CD.combustivel.saidas=CD.combustivel.saidas.filter(s=>s.id!==id);App.navigate("combustivel");});};
 
@@ -2232,7 +2196,7 @@ Pages._printCombustivel=function(){
   const consMap={};
   comb.equipamentos.forEach(eq=>{consMap[eq.id]={nome:eq.nome,tipo:eq.tipo||"",total:0,n:0};});
   comb.saidas.forEach(s=>{if(consMap[s.eqId]){consMap[s.eqId].total+=parseFloat(s.litros)||0;consMap[s.eqId].n++;}});
-  const eqTable=comb.equipamentos.map(eq=>{const c=consMap[eq.id];return`<tr style="border-bottom:1px solid #eee"><td style="padding:6px 8px"><strong>${c.nome}</strong></td><td style="padding:6px 8px">${c.tipo}</td><td style="padding:6px 8px;text-align:right">${c.n}</td><td style="padding:6px 8px;text-align:right;font-weight:700;color:#e07b2a">${fmtNum(c.total,1)} L</td></tr>`;}).join("");
+  const eqTable=comb.equipamentos.map(eq=>{const c=consMap[eq.id];return`<tr style="border-bottom:1px solid #eee"><td style="padding:6px 8px"><strong>${c.codigo||c.nome}</strong></td><td style="padding:6px 8px">${c.tipo}</td><td style="padding:6px 8px;text-align:right">${c.n}</td><td style="padding:6px 8px;text-align:right;font-weight:700;color:#e07b2a">${fmtNum(c.total,1)} L</td></tr>`;}).join("");
   const w=window.open("","_blank");
   w.document.write(`<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Relatório Combustível</title><style>body{font-family:sans-serif;padding:24px;color:#2b1d12}h1{color:#1b4332}h2{color:#2d6a4f;margin-top:20px}table{width:100%;border-collapse:collapse}th{background:#2d6a4f;color:#fff;padding:7px 10px;text-align:left}@media print{button{display:none}}</style></head><body>
     <h1>🌿 Organo Pará — Relatório de Combustível</h1>
@@ -2261,17 +2225,13 @@ Pages._printCombustivel=function(){
 // ═══════════════════════════════════════════════════════════════
 //  BOOT
 // ═══════════════════════════════════════════════════════════════
-// ── BOOT ──────────────────────────────────────────────────
-// CSS spinner
-const _ss=document.createElement("style");
-_ss.textContent="@keyframes spin{to{transform:rotate(360deg)}}";
-document.head.appendChild(_ss);
-
+// ── BOOT ────────────────────────────────────────────────────
+const _css=document.createElement("style");
+_css.textContent="@keyframes spin{to{transform:rotate(360deg)}}";
+document.head.appendChild(_css);
 loadMeta();
 document.getElementById("loginScreen").style.display="flex";
 document.getElementById("appShell").style.display="none";
-
-// Auto-restore sessão
 if(META.currentUser){
   document.getElementById("loginScreen").style.display="none";
   document.getElementById("appShell").style.display="block";
@@ -2280,10 +2240,13 @@ if(META.currentUser){
   if(META.cicloAtivo){
     Ciclos.switchTo(META.cicloAtivo).finally(()=>App._hideSpinner());
   }else{
-    App._hideSpinner();
+    _sb.from("ciclos").select("*").eq("status","ativo").order("criado_em",{ascending:false}).limit(1).then(({data})=>{
+      App._hideSpinner();
+      if(data&&data.length>0){Ciclos.switchTo(data[0].id,data[0]);}
+      else{App.navigate("ciclos");}
+    });
   }
 }
-
 document.addEventListener("keydown",function(e){
   if(e.key==="Enter"&&document.getElementById("loginScreen").style.display!=="none")Auth.login();
 });
