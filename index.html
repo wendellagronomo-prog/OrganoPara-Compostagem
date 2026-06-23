@@ -867,7 +867,7 @@ Pages._salvarCiclo=async function(){
   if(!nome){App.toast("Informe o nome do ciclo","err");return;}
   if(id){
     const c=loadCiclo(id);if(!c)return;
-    c.codigo||c.nome=nome;c.descricao=desc;c.dataInicio=ini||c.dataInicio;c.dataFim=fim||null;
+    c.codigo=nome;c.descricao=desc;c.dataInicio=ini||c.dataInicio;c.dataFim=fim||null;
     localStorage.setItem(cicloStorageKey(id),JSON.stringify(c));
     if(META.cicloAtivo===id)CD=c;
     App.toast("Ciclo atualizado!");
